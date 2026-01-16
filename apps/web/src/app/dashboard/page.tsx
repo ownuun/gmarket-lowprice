@@ -122,24 +122,45 @@ export default function DashboardPage() {
   const handleDelete = async (jobId: string) => {
     if (!confirm('이 작업을 삭제하시겠습니까?')) return
 
+    // Optimistic update - 즉시 UI에서 제거
+    setJobs((prev) => prev.filter((j) => j.id !== jobId))
+    setArchivedJobs((prev) => prev.filter((j) => j.id !== jobId))
+
     const res = await fetch(`/api/jobs/${jobId}`, {
       method: 'DELETE',
     })
 
-    if (res.ok) {
+    if (!res.ok) {
+      // 실패시 다시 가져오기
       fetchJobs()
       fetchArchivedJobs()
     }
   }
 
   const handleArchive = async (jobId: string, archive: boolean) => {
+    // Optimistic update - 즉시 UI 업데이트
+    if (archive) {
+      const job = jobs.find((j) => j.id === jobId)
+      if (job) {
+        setJobs((prev) => prev.filter((j) => j.id !== jobId))
+        setArchivedJobs((prev) => [{ ...job, archived: true }, ...prev])
+      }
+    } else {
+      const job = archivedJobs.find((j) => j.id === jobId)
+      if (job) {
+        setArchivedJobs((prev) => prev.filter((j) => j.id !== jobId))
+        setJobs((prev) => [{ ...job, archived: false }, ...prev])
+      }
+    }
+
     const res = await fetch(`/api/jobs/${jobId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ archived: archive }),
     })
 
-    if (res.ok) {
+    if (!res.ok) {
+      // 실패시 다시 가져오기
       fetchJobs()
       fetchArchivedJobs()
     }
