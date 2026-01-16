@@ -102,6 +102,18 @@ export default function DashboardPage() {
     }
   }
 
+  const handleDelete = async (jobId: string) => {
+    if (!confirm('이 작업을 삭제하시겠습니까?')) return
+
+    const res = await fetch(`/api/jobs/${jobId}`, {
+      method: 'DELETE',
+    })
+
+    if (res.ok) {
+      fetchJobs()
+    }
+  }
+
   return (
     <main className="min-h-screen p-4 md:p-8">
       <div className="max-w-4xl mx-auto">
@@ -175,18 +187,28 @@ export default function DashboardPage() {
                       </div>
                     </div>
                     <Progress
-                      value={(job.completed_models / job.total_models) * 100}
-                      className="h-2 mb-2"
+                      value={((job.completed_models + job.failed_models) / job.total_models) * 100}
+                      className="h-2 mb-3"
                     />
-                    {job.status === 'completed' && (
+                    <div className="flex gap-2">
+                      {job.status === 'completed' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => window.open(`/api/jobs/${job.id}/download`, '_blank')}
+                        >
+                          엑셀 다운로드
+                        </Button>
+                      )}
                       <Button
-                        variant="outline"
+                        variant="ghost"
                         size="sm"
-                        onClick={() => window.open(`/api/jobs/${job.id}/download`, '_blank')}
+                        className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                        onClick={() => handleDelete(job.id)}
                       >
-                        엑셀 다운로드
+                        삭제
                       </Button>
-                    )}
+                    </div>
                   </div>
                 ))}
               </div>
