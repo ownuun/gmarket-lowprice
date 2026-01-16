@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import { createClient } from '@supabase/supabase-js'
 import { BrowserManager } from './browser.js'
 import { GmarketSearcher } from './searcher.js'
