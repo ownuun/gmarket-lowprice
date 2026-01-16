@@ -8,7 +8,9 @@ import type { Product } from './types.js'
 const SUPABASE_URL = process.env.SUPABASE_URL!
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY!
 const POLL_INTERVAL = 5000 // 5초마다 폴링
-const DELAY_BETWEEN_ITEMS = 3000 // 아이템간 3초 대기
+const CONCURRENCY = 2 // 동시 처리 개수
+const MIN_DELAY = 3000 // 최소 딜레이 (3초)
+const MAX_DELAY = 8000 // 최대 딜레이 (8초)
 
 // Supabase 클라이언트 (service_role 키 사용 - RLS 우회)
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
@@ -45,6 +47,19 @@ interface Job {
 
 async function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function randomDelay(): number {
+  return Math.floor(Math.random() * (MAX_DELAY - MIN_DELAY + 1)) + MIN_DELAY
+}
+
+// 배열을 chunk로 분할
+function chunk<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = []
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size))
+  }
+  return chunks
 }
 
 function transformProduct(product: Product, searchUrl?: string) {
@@ -151,10 +166,21 @@ async function processJob(searcher: GmarketSearcher, job: Job): Promise<void> {
     return
   }
 
-  // 각 아이템 처리
-  for (const item of items as JobItem[]) {
-    await processJobItem(searcher, item)
-    await delay(DELAY_BETWEEN_ITEMS)
+  // 병렬 처리 (CONCURRENCY 개씩)
+  const itemChunks = chunk(items as JobItem[], CONCURRENCY)
+
+  for (const batch of itemChunks) {
+    console.log(`[배치] ${batch.map(i => i.model_name).join(', ')} 동시 처리`)
+
+    // 배치 내 아이템 병렬 처리
+    await Promise.all(batch.map(item => processJobItem(searcher, item)))
+
+    // 다음 배치 전 랜덤 딜레이
+    if (batch !== itemChunks[itemChunks.length - 1]) {
+      const delayMs = randomDelay()
+      console.log(`[대기] ${(delayMs / 1000).toFixed(1)}초`)
+      await delay(delayMs)
+    }
   }
 
   // Job 완료 확인
@@ -216,6 +242,7 @@ async function main(): Promise<void> {
   const searcher = new GmarketSearcher(browser)
 
   console.log('[준비] 브라우저 시작 완료')
+  console.log(`[설정] 동시처리: ${CONCURRENCY}개, 딜레이: ${MIN_DELAY/1000}-${MAX_DELAY/1000}초`)
   console.log(`[대기] ${POLL_INTERVAL / 1000}초마다 작업 확인 중...\n`)
 
   // 종료 시그널 핸들링
