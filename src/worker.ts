@@ -47,17 +47,21 @@ async function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function transformProduct(product: Product) {
+function transformProduct(product: Product, searchUrl?: string) {
   return {
+    rank: product.rank,
     name: product.productName,
     originalPrice: product.regularPrice,
     discountPrice: product.couponPrice,
+    discountPercent: product.discountPercent,
     shippingFee: product.shippingFee,
     totalPrice:
       (product.couponPrice ?? product.regularPrice ?? 0) +
       (product.shippingFee ?? 0),
     seller: product.sellerName,
     url: product.productUrl,
+    searchUrl: searchUrl || product.searchUrl,
+    crawledAt: new Date().toISOString(),
   }
 }
 
@@ -92,7 +96,9 @@ async function processJobItem(
       await supabase.rpc('increment_job_failed', { job_id: item.job_id })
     } else {
       // 성공시 결과 저장
-      const transformedProducts = result.products.map(transformProduct)
+      const transformedProducts = result.products.map((p) =>
+        transformProduct(p, result.searchUrl)
+      )
 
       await supabase
         .from('job_items')
