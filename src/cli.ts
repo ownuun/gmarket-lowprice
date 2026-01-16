@@ -155,18 +155,33 @@ program
       maxDelay: parseFloat(opts.maxDelay),
     });
 
-    // 최저가 상품만 수집 (searchUrl 포함)
-    const lowestProducts: Product[] = [];
+    // 모든 상품 수집 (searchUrl 포함, 검색 실패도 포함)
+    const allProducts: Product[] = [];
     for (const result of results) {
-      const lowest = getLowestPriceProduct(result.products);
-      if (lowest) {
-        // searchUrl을 Product에 추가
-        lowest.searchUrl = result.searchUrl;
-        lowestProducts.push(lowest);
+      if (result.products.length > 0) {
+        for (const product of result.products) {
+          product.searchUrl = result.searchUrl;
+          allProducts.push(product);
+        }
+      } else {
+        // 검색 결과 없는 경우 placeholder 추가
+        allProducts.push({
+          modelName: result.modelName,
+          productName: '검색결과 없음',
+          sellerName: '-',
+          couponPrice: null,
+          regularPrice: null,
+          shippingFee: null,
+          discountPercent: null,
+          productUrl: '',
+          searchUrl: result.searchUrl,
+          rank: 0,
+          crawledAt: new Date(),
+        });
       }
     }
 
-    if (lowestProducts.length === 0) {
+    if (allProducts.length === 0) {
       console.log('\n상품을 찾지 못했습니다.');
       process.exit(0);
     }
@@ -177,7 +192,7 @@ program
     console.log('='.repeat(50));
 
     const formats = opts.format as OutputFormat[];
-    await exportResults(lowestProducts, formats, opts.outputDir);
+    await exportResults(allProducts, formats, opts.outputDir);
 
     // 요약
     console.log('\n' + '='.repeat(50));
@@ -192,15 +207,15 @@ program
       failed.slice(0, 5).forEach(r => console.log(`  - ${r.modelName}: ${r.error || '상품 없음'}`));
       if (failed.length > 5) console.log(`  ... 외 ${failed.length - 5}개`);
     }
-    console.log(`최저가 상품: ${lowestProducts.length}개`);
+    console.log(`수집 상품: ${allProducts.length}개`);
 
     // 상세 출력 (10개 이하일 때만)
-    if (lowestProducts.length <= 10) {
-      for (const p of lowestProducts) {
+    if (allProducts.length <= 10) {
+      for (const p of allProducts) {
         // 해당 모델의 검색 결과 찾기
         const searchResult = results.find(r => r.modelName === p.modelName);
 
-        console.log(`\n[${p.modelName}]`);
+        console.log(`\n[${p.modelName}] #${p.rank}`);
         if (searchResult?.searchUrl) {
           console.log(`  검색결과: ${searchResult.searchUrl}`);
         }
@@ -209,7 +224,6 @@ program
         console.log(`  쿠폰적용가: ${p.couponPrice?.toLocaleString()}원`);
         console.log(`  배송비: ${p.shippingFee ? `${p.shippingFee.toLocaleString()}원` : '무료'}`);
         console.log(`  총가격: ${getTotalPrice(p)?.toLocaleString()}원`);
-        console.log(`  신뢰도: ${p.clusterSize}/5 ${p.clusterSize && p.clusterSize >= 4 ? '(높음)' : p.clusterSize && p.clusterSize >= 2 ? '(보통)' : '(낮음)'}`);
       }
     }
   });

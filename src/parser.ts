@@ -44,24 +44,55 @@ export class GmarketParser {
     ]);
     if (!productName) return null;
 
-    // 가격 추출 (여러 방법 시도)
-    // 방법 1: data-params-exp 속성에서 추출 (가장 정확)
-    let couponPrice = await this.extractPriceFromDataAttr(item);
+    // 가격 추출 (data-params-exp 속성에서 추출 - 가장 정확)
+    const priceInfo = await this.extractPricesFromDataAttr(item);
 
-    // 방법 2: HTML 요소에서 추출
-    if (!couponPrice) {
-      couponPrice = await this.extractPrice(item, [
-        '.box__price-coupon strong.text__value',
-        '.box__price-seller strong.text__value',
-        '.box__price-seller > strong.text__value',
-      ]);
+    let regularPrice: number | null = null;
+    let couponPrice: number | null = null;
+
+    if (priceInfo) {
+      // origin_price를 정가로 설정
+      regularPrice = priceInfo.originPrice;
+
+      // 할인가 우선순위: coupon_price > promotion_price (정가보다 낮을 때만)
+      if (priceInfo.couponPrice && regularPrice && priceInfo.couponPrice < regularPrice) {
+        // 쿠폰 할인가
+        couponPrice = priceInfo.couponPrice;
+      } else if (priceInfo.promotionPrice && regularPrice && priceInfo.promotionPrice < regularPrice) {
+        // 프로모션 할인가 (쿠폰이 없을 때)
+        couponPrice = priceInfo.promotionPrice;
+      }
+
+      // 정가가 없으면 promotion_price를 정가로 사용
+      if (!regularPrice) {
+        regularPrice = priceInfo.promotionPrice;
+      }
     }
 
-    // 정가
-    const regularPrice = await this.extractPrice(item, [
-      '.box__price-original .text__value',
-      '[class*="original"] .text__value',
-    ]);
+    // HTML 요소에서 추출 (fallback)
+    if (!regularPrice) {
+      // 정가 우선 추출
+      regularPrice = await this.extractPrice(item, [
+        '.box__price-original .text__value',
+        '[class*="original"] .text__value',
+      ]);
+
+      // 정가가 없으면 판매가를 정가로
+      if (!regularPrice) {
+        regularPrice = await this.extractPrice(item, [
+          '.box__price-seller strong.text__value',
+          '.box__price-seller > strong.text__value',
+        ]);
+      }
+
+      // 쿠폰가 추출 (정가보다 낮을 때만)
+      const htmlCouponPrice = await this.extractPrice(item, [
+        '.box__price-coupon strong.text__value',
+      ]);
+      if (htmlCouponPrice && regularPrice && htmlCouponPrice < regularPrice) {
+        couponPrice = htmlCouponPrice;
+      }
+    }
 
     // 배송비 (태그에서 추출: "배송비 2,500원")
     const shippingFee = await this.extractShippingFee(item);
@@ -83,9 +114,9 @@ export class GmarketParser {
       productUrl = `https://www.gmarket.co.kr${productUrl}`;
     }
 
-    // 할인율
+    // 할인율 (쿠폰적용가가 있을 때만 계산)
     let discountPercent: number | null = null;
-    if (regularPrice && couponPrice && regularPrice > couponPrice) {
+    if (regularPrice && couponPrice) {
       discountPercent = Math.round((1 - couponPrice / regularPrice) * 100);
     }
 
@@ -93,7 +124,7 @@ export class GmarketParser {
       modelName,
       productName,
       sellerName,
-      couponPrice: couponPrice ?? regularPrice,
+      couponPrice,
       regularPrice,
       shippingFee,
       discountPercent,
@@ -134,7 +165,11 @@ export class GmarketParser {
     return this.parsePrice(text);
   }
 
-  private async extractPriceFromDataAttr(element: any): Promise<number | null> {
+  private async extractPricesFromDataAttr(element: any): Promise<{
+    originPrice: number | null;
+    promotionPrice: number | null;
+    couponPrice: number | null;
+  } | null> {
     try {
       // data-params-exp 속성에서 가격 추출
       const link = await element.$('a[data-montelena-acode]');
@@ -147,9 +182,18 @@ export class GmarketParser {
       if (!match) return null;
 
       const logMap = JSON.parse(decodeURIComponent(match[1]));
-      // 우선순위: coupon_price > promotion_price > origin_price
-      const price = logMap.coupon_price || logMap.promotion_price || logMap.origin_price;
-      return price ? parseInt(String(price), 10) : null;
+
+      const parsePrice = (val: any): number | null => {
+        if (!val || val === '') return null;
+        const num = parseInt(String(val), 10);
+        return isNaN(num) ? null : num;
+      };
+
+      return {
+        originPrice: parsePrice(logMap.origin_price),
+        promotionPrice: parsePrice(logMap.promotion_price),
+        couponPrice: parsePrice(logMap.coupon_price),
+      };
     } catch {
       return null;
     }
