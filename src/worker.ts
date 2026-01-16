@@ -8,7 +8,7 @@ import type { Product } from './types.js'
 const SUPABASE_URL = process.env.SUPABASE_URL!
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY!
 const POLL_INTERVAL = 5000 // 5초마다 폴링
-const CONCURRENCY = 2 // 동시 처리 개수
+const CONCURRENCY = 1 // 동시 처리 개수 (1=순차, 2=병렬)
 const MIN_DELAY = 3000 // 최소 딜레이 (3초)
 const MAX_DELAY = 8000 // 최대 딜레이 (8초)
 
