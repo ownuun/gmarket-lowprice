@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
 import { signOut } from '@/app/actions/auth'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -18,14 +17,18 @@ interface Job {
   failed_models: number
   created_at: string
   completed_at: string | null
+  archived: boolean
 }
+
+type TabType = 'active' | 'archived'
 
 export default function DashboardPage() {
   const [models, setModels] = useState('')
   const [loading, setLoading] = useState(false)
   const [jobs, setJobs] = useState<Job[]>([])
+  const [archivedJobs, setArchivedJobs] = useState<Job[]>([])
   const [userEmail, setUserEmail] = useState<string | null>(null)
-  const router = useRouter()
+  const [activeTab, setActiveTab] = useState<TabType>('active')
   const supabase = createClient()
 
   useEffect(() => {
@@ -37,17 +40,31 @@ export default function DashboardPage() {
     }
     getUser()
     fetchJobs()
+    fetchArchivedJobs()
 
     // 5초마다 작업 상태 갱신
-    const interval = setInterval(fetchJobs, 5000)
+    const interval = setInterval(() => {
+      fetchJobs()
+      if (activeTab === 'archived') {
+        fetchArchivedJobs()
+      }
+    }, 5000)
     return () => clearInterval(interval)
-  }, [])
+  }, [activeTab])
 
   const fetchJobs = async () => {
-    const res = await fetch('/api/jobs')
+    const res = await fetch('/api/jobs?archived=false')
     if (res.ok) {
       const data = await res.json()
       setJobs(Array.isArray(data) ? data : [])
+    }
+  }
+
+  const fetchArchivedJobs = async () => {
+    const res = await fetch('/api/jobs?archived=true')
+    if (res.ok) {
+      const data = await res.json()
+      setArchivedJobs(Array.isArray(data) ? data : [])
     }
   }
 
@@ -111,8 +128,24 @@ export default function DashboardPage() {
 
     if (res.ok) {
       fetchJobs()
+      fetchArchivedJobs()
     }
   }
+
+  const handleArchive = async (jobId: string, archive: boolean) => {
+    const res = await fetch(`/api/jobs/${jobId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archived: archive }),
+    })
+
+    if (res.ok) {
+      fetchJobs()
+      fetchArchivedJobs()
+    }
+  }
+
+  const currentJobs = activeTab === 'active' ? jobs : archivedJobs
 
   return (
     <main className="min-h-screen p-4 md:p-8">
@@ -157,16 +190,43 @@ export default function DashboardPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>작업 목록</CardTitle>
+            <div className="flex justify-between items-center">
+              <CardTitle>작업 목록</CardTitle>
+              <div className="flex gap-1 bg-muted p-1 rounded-lg">
+                <button
+                  onClick={() => setActiveTab('active')}
+                  className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                    activeTab === 'active'
+                      ? 'bg-background shadow-sm font-medium'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  활성 ({jobs.length})
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveTab('archived')
+                    fetchArchivedJobs()
+                  }}
+                  className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                    activeTab === 'archived'
+                      ? 'bg-background shadow-sm font-medium'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  보관함 ({archivedJobs.length})
+                </button>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
-            {jobs.length === 0 ? (
+            {currentJobs.length === 0 ? (
               <p className="text-muted-foreground text-center py-8">
-                작업이 없습니다
+                {activeTab === 'active' ? '작업이 없습니다' : '보관된 작업이 없습니다'}
               </p>
             ) : (
               <div className="space-y-4">
-                {jobs.map((job) => (
+                {currentJobs.map((job) => (
                   <div key={job.id} className="border rounded-lg p-4">
                     <div className="flex justify-between items-start mb-2">
                       <div>
@@ -198,6 +258,23 @@ export default function DashboardPage() {
                           onClick={() => window.open(`/api/jobs/${job.id}/download`, '_blank')}
                         >
                           엑셀 다운로드
+                        </Button>
+                      )}
+                      {activeTab === 'active' ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleArchive(job.id, true)}
+                        >
+                          보관
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleArchive(job.id, false)}
+                        >
+                          복원
                         </Button>
                       )}
                       <Button
