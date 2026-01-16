@@ -1,28 +1,31 @@
 {
-  "name": "gmarket-crawler",
+  "name": "gmarket-lowprice",
   "version": "0.1.0",
-  "description": "Gmarket price comparison crawler - 지마켓 가격 비교 크롤러",
+  "private": true,
   "type": "module",
-  "main": "dist/index.js",
-  "bin": {
-    "gmarket-crawler": "dist/cli.js"
-  },
+  "description": "G마켓 최저가 검색 웹 서비스",
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/cli.js",
-    "dev": "tsx src/cli.ts",
-    "test": "tsx src/cli.ts -m CM-417MB -m IS-617M"
+    "dev": "pnpm -r --parallel dev",
+    "dev:web": "pnpm --filter @gmarket/web dev",
+    "dev:crawler": "pnpm --filter @gmarket/crawler dev",
+    "build": "pnpm -r build",
+    "build:shared": "pnpm --filter @gmarket/shared build",
+    "build:web": "pnpm --filter @gmarket/web build",
+    "build:crawler": "pnpm --filter @gmarket/crawler build",
+    "build:worker": "tsc",
+    "worker": "node dist/worker.js",
+    "cli": "pnpm --filter @gmarket/crawler cli"
   },
   "dependencies": {
-    "commander": "^12.0.0",
+    "@supabase/supabase-js": "^2.47.0",
+    "commander": "^12.1.0",
     "exceljs": "^4.4.0",
-    "playwright": "^1.40.0",
+    "playwright": "^1.49.0",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "tsx": "^4.7.0",
+    "@types/node": "^25.0.9",
     "typescript": "^5.3.0"
   }
 }

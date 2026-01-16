@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  worker:
+    build: .
+    restart: unless-stopped
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+    # 크롤러가 너무 많은 자원을 사용하지 않도록 제한
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
