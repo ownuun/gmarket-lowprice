@@ -30,8 +30,10 @@ export interface CrawlerOptions {
 }
 
 export function getTotalPrice(product: Product): number | null {
-  if (product.couponPrice === null) return null;
-  return product.couponPrice + (product.shippingFee ?? 0);
+  // 쿠폰적용가가 있으면 쿠폰적용가 기준, 없으면 정가 기준
+  const basePrice = product.couponPrice ?? product.regularPrice;
+  if (basePrice === null) return null;
+  return basePrice + (product.shippingFee ?? 0);
 }
 
 export function getLowestPriceProduct(products: Product[]): Product | null {

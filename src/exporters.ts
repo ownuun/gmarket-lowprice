@@ -23,14 +23,15 @@ export class ExcelExporter {
 
     // 헤더
     sheet.columns = [
+      { header: '순위', key: 'rank', width: 6 },
       { header: '모델명', key: 'modelName', width: 15 },
       { header: '상품명', key: 'productName', width: 50 },
       { header: '판매자', key: 'sellerName', width: 15 },
-      { header: '쿠폰적용가', key: 'couponPrice', width: 12 },
+      { header: '정가', key: 'regularPrice', width: 12 },
+      { header: '할인가', key: 'couponPrice', width: 12 },
+      { header: '할인율', key: 'discountPercent', width: 8 },
       { header: '배송비', key: 'shippingFee', width: 10 },
       { header: '총가격', key: 'totalPrice', width: 12 },
-      { header: '할인율', key: 'discountPercent', width: 8 },
-      { header: '신뢰도', key: 'clusterSize', width: 8 },
       { header: '상품URL', key: 'productUrl', width: 40 },
       { header: '검색URL', key: 'searchUrl', width: 60 },
       { header: '수집시간', key: 'crawledAt', width: 20 },
@@ -44,39 +45,53 @@ export class ExcelExporter {
       fgColor: { argb: 'FFE0E0E0' },
     };
 
-    // 데이터
-    for (const p of products) {
-      const row = sheet.addRow({
+    // 데이터 (모델별 그룹으로 정렬)
+    const sortedProducts = [...products].sort((a, b) => {
+      if (a.modelName !== b.modelName) return a.modelName.localeCompare(b.modelName);
+      return (a.rank ?? 0) - (b.rank ?? 0);
+    });
+
+    let currentModel = '';
+    let groupStartRow = 2; // 헤더가 1번째 row
+
+    for (let i = 0; i < sortedProducts.length; i++) {
+      const p = sortedProducts[i];
+      const isNewModel = p.modelName !== currentModel;
+      const isLastProduct = i === sortedProducts.length - 1;
+      const nextProduct = sortedProducts[i + 1];
+      const isLastOfGroup = isLastProduct || nextProduct?.modelName !== p.modelName;
+
+      if (isNewModel) {
+        currentModel = p.modelName;
+        groupStartRow = sheet.rowCount + 1;
+      }
+
+      const totalPrice = getTotalPrice(p);
+      sheet.addRow({
+        rank: p.rank ?? '-',
         modelName: p.modelName,
         productName: p.productName,
-        sellerName: p.sellerName,
+        regularPrice: p.regularPrice ? `${p.regularPrice.toLocaleString()}원` : '-',
         couponPrice: p.couponPrice ? `${p.couponPrice.toLocaleString()}원` : '-',
-        shippingFee: p.shippingFee === 0 ? '무료' : p.shippingFee ? `${p.shippingFee.toLocaleString()}원` : '-',
-        totalPrice: getTotalPrice(p) ? `${getTotalPrice(p)!.toLocaleString()}원` : '-',
         discountPercent: p.discountPercent ? `${p.discountPercent}%` : '-',
-        clusterSize: p.clusterSize ? `${p.clusterSize}/5` : '-',
+        shippingFee: p.shippingFee === 0 ? '무료' : p.shippingFee ? `${p.shippingFee.toLocaleString()}원` : '-',
+        totalPrice: totalPrice ? `${totalPrice.toLocaleString()}원` : '-',
+        sellerName: p.sellerName,
         productUrl: p.productUrl,
         searchUrl: p.searchUrl || '-',
         crawledAt: p.crawledAt.toISOString().slice(0, 19).replace('T', ' '),
       });
 
-      // 클러스터 크기에 따른 행 색상
-      if (p.clusterSize && p.clusterSize >= 4) {
-        // 4-5개: 녹색 (높은 신뢰도)
-        row.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'FFC6EFCE' },  // 연한 녹색
-        };
-      } else if (p.clusterSize && p.clusterSize >= 2) {
-        // 2-3개: 주황색 (중간 신뢰도)
-        row.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'FFFFEB9C' },  // 연한 주황색
-        };
+      // 그룹의 마지막 행이면 굵은 하단 테두리 적용
+      if (isLastOfGroup) {
+        const lastRow = sheet.getRow(sheet.rowCount);
+        lastRow.eachCell((cell) => {
+          cell.border = {
+            ...cell.border,
+            bottom: { style: 'thick' },
+          };
+        });
       }
-      // 1개: 기본 색상 (낮은 신뢰도)
     }
 
     await workbook.xlsx.writeFile(filepath);
@@ -124,7 +139,7 @@ export class MarkdownExporter {
       }
       lines.push(`- 상품명: ${p.productUrl ? `[${name}](${p.productUrl})` : name}`);
       lines.push(`- 판매자: ${p.sellerName}`);
-      lines.push(`- 쿠폰적용가: ${coupon}`);
+      lines.push(`- 할인가: ${coupon}`);
       lines.push(`- 배송비: ${shipping}`);
       lines.push(`- 총가격: ${total}`);
       lines.push(`- 신뢰도: ${p.clusterSize}/5 ${p.clusterSize && p.clusterSize >= 4 ? '🟢' : p.clusterSize && p.clusterSize >= 2 ? '🟡' : '🔴'}`);
@@ -150,18 +165,20 @@ export class CsvExporter {
     const name = filename || `gmarket_prices_${timestamp}`;
     const filepath = path.join(this.outputDir, `${name}.csv`);
 
-    const headers = ['모델명', '상품명', '판매자', '쿠폰적용가', '배송비', '총가격', '할인율', '신뢰도', '상품URL', '검색URL', '수집시간'];
+    const headers = ['순위', '모델명', '상품명', '판매자', '정가', '할인가', '할인율', '배송비', '총가격', '신뢰도', '상품URL', '검색URL', '수집시간'];
     const lines = [headers.join(',')];
 
     for (const p of products) {
       const row = [
+        p.rank ?? '',
         this.escape(p.modelName),
         this.escape(p.productName),
         this.escape(p.sellerName),
+        p.regularPrice ?? '',
         p.couponPrice ?? '',
+        p.discountPercent ? `${p.discountPercent}%` : '',
         p.shippingFee ?? 0,
         getTotalPrice(p) ?? '',
-        p.discountPercent ?? '',
         p.clusterSize ?? '',
         this.escape(p.productUrl),
         this.escape(p.searchUrl || ''),
@@ -205,10 +222,11 @@ export class JsonExporter {
         modelName: p.modelName,
         productName: p.productName,
         sellerName: p.sellerName,
+        regularPrice: p.regularPrice,
         couponPrice: p.couponPrice,
+        discountPercent: p.discountPercent,
         shippingFee: p.shippingFee,
         totalPrice: getTotalPrice(p),
-        discountPercent: p.discountPercent,
         clusterSize: p.clusterSize,
         productUrl: p.productUrl,
         searchUrl: p.searchUrl,
