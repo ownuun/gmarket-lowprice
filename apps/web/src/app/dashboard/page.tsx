@@ -69,6 +69,20 @@ export default function DashboardPage() {
     return () => clearInterval(interval)
   }, [jobListTab])
 
+  useEffect(() => {
+    if (mainTab === 'crawling') {
+      setPlayautoFile(null)
+      setTemplateFile(null)
+      setGmarketFile(null)
+      setSelectedJobId('')
+      setCalcResult(null)
+      setCalcError(null)
+      if (playautoInputRef.current) playautoInputRef.current.value = ''
+      if (templateInputRef.current) templateInputRef.current.value = ''
+      if (gmarketInputRef.current) gmarketInputRef.current.value = ''
+    }
+  }, [mainTab])
+
   const fetchJobs = async () => {
     const res = await fetch('/api/jobs?archived=false')
     if (res.ok) {
@@ -452,6 +466,7 @@ export default function DashboardPage() {
                   <p className="text-xs text-muted-foreground mb-3">상품 목록 (업체상품코드, 모델명, 상품명, 한줄메모)</p>
                   <div className="flex gap-2">
                     <Input
+                      key={playautoFile ? 'playauto-selected' : 'playauto-empty'}
                       ref={playautoInputRef}
                       type="file"
                       accept=".xlsx,.xls"
@@ -515,6 +530,7 @@ export default function DashboardPage() {
                   {gmarketSource === 'file' ? (
                     <div className="space-y-2">
                       <Input
+                        key={gmarketFile ? 'gmarket-selected' : 'gmarket-empty'}
                         ref={gmarketInputRef}
                         type="file"
                         accept=".xlsx,.xls"
@@ -557,6 +573,7 @@ export default function DashboardPage() {
                   <p className="text-xs text-muted-foreground mb-3">쇼핑몰별 양식 (마스터상품코드, 쇼핑몰코드, 쇼핑몰ID, 판매가)</p>
                   <div className="flex gap-2">
                     <Input
+                      key={templateFile ? 'template-selected' : 'template-empty'}
                       ref={templateInputRef}
                       type="file"
                       accept=".xlsx,.xls"
