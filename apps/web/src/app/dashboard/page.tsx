@@ -464,15 +464,22 @@ export default function DashboardPage() {
                     {playautoFile && <span className="text-green-600 text-sm">✓</span>}
                   </div>
                   <p className="text-xs text-muted-foreground mb-3">상품 목록 (업체상품코드, 모델명, 상품명, 한줄메모)</p>
+                  <input
+                    ref={playautoInputRef}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={(e) => setPlayautoFile(e.target.files?.[0] || null)}
+                    className="hidden"
+                  />
                   <div className="flex gap-2">
-                    <Input
-                      key={playautoFile ? 'playauto-selected' : 'playauto-empty'}
-                      ref={playautoInputRef}
-                      type="file"
-                      accept=".xlsx,.xls"
-                      onChange={(e) => setPlayautoFile(e.target.files?.[0] || null)}
-                      className="flex-1"
-                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1 justify-start font-normal"
+                      onClick={() => playautoInputRef.current?.click()}
+                    >
+                      {playautoFile ? playautoFile.name : '파일 선택...'}
+                    </Button>
                     {playautoFile && (
                       <Button
                         type="button"
@@ -529,16 +536,39 @@ export default function DashboardPage() {
 
                   {gmarketSource === 'file' ? (
                     <div className="space-y-2">
-                      <Input
-                        key={gmarketFile ? 'gmarket-selected' : 'gmarket-empty'}
+                      <p className="text-xs text-muted-foreground mb-2">
+                        필수 컬럼: 모델명, 판매자, 정가, 할인율
+                      </p>
+                      <input
                         ref={gmarketInputRef}
                         type="file"
                         accept=".xlsx,.xls"
                         onChange={(e) => setGmarketFile(e.target.files?.[0] || null)}
+                        className="hidden"
                       />
-                      <p className="text-xs text-muted-foreground">
-                        필수 컬럼: 모델명, 판매자, 정가, 할인율
-                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="flex-1 justify-start font-normal"
+                          onClick={() => gmarketInputRef.current?.click()}
+                        >
+                          {gmarketFile ? gmarketFile.name : '파일 선택...'}
+                        </Button>
+                        {gmarketFile && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setGmarketFile(null)
+                              if (gmarketInputRef.current) gmarketInputRef.current.value = ''
+                            }}
+                          >
+                            ✕
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -571,15 +601,22 @@ export default function DashboardPage() {
                     {templateFile && <span className="text-green-600 text-sm">✓</span>}
                   </div>
                   <p className="text-xs text-muted-foreground mb-3">쇼핑몰별 양식 (마스터상품코드, 쇼핑몰코드, 쇼핑몰ID, 판매가)</p>
+                  <input
+                    ref={templateInputRef}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={(e) => setTemplateFile(e.target.files?.[0] || null)}
+                    className="hidden"
+                  />
                   <div className="flex gap-2">
-                    <Input
-                      key={templateFile ? 'template-selected' : 'template-empty'}
-                      ref={templateInputRef}
-                      type="file"
-                      accept=".xlsx,.xls"
-                      onChange={(e) => setTemplateFile(e.target.files?.[0] || null)}
-                      className="flex-1"
-                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1 justify-start font-normal"
+                      onClick={() => templateInputRef.current?.click()}
+                    >
+                      {templateFile ? templateFile.name : '파일 선택...'}
+                    </Button>
                     {templateFile && (
                       <Button
                         type="button"
