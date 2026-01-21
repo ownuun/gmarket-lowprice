@@ -158,3 +158,88 @@ export async function generateOutputExcel(
   const buffer = await workbook.xlsx.writeBuffer()
   return Buffer.from(buffer)
 }
+
+const VPS_MEMO_PREFIX = 'VPS / '
+const VPS_DROP_HEADERS = ['시중가', '원가', '표준공급가', '판매가', '배송방법', '배송비']
+
+export async function generateEmpMatchedVps(
+  playautoBuffer: ArrayBuffer,
+  matchedMasterCodes: Set<string>
+): Promise<{ buffer: Buffer; keptRows: number; removedRows: number }> {
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.load(playautoBuffer)
+  const ws = workbook.worksheets[0]
+  const hm = headerMap(ws)
+
+  if (!hm['업체상품코드']) {
+    throw new Error('EMP 엑셀에 업체상품코드 컬럼이 없습니다.')
+  }
+
+  const cMaster = hm['업체상품코드']
+  const cMemo = hm['한줄메모']
+
+  // 뒤에서부터 삭제해야 인덱스 안 꼬임
+  const rowsToDelete: number[] = []
+  ws.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return
+    const masterVal = row.getCell(cMaster).value
+    const master = normMasterCode(masterVal)
+    if (!master || !matchedMasterCodes.has(master)) {
+      rowsToDelete.push(rowNumber)
+    }
+  })
+
+  for (const rowNum of rowsToDelete.reverse()) {
+    ws.spliceRows(rowNum, 1)
+  }
+
+  if (cMemo) {
+    ws.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return
+      const cell = row.getCell(cMemo)
+      const val = cell.value?.toString() || ''
+      if (/^\s*VPS\s*\//i.test(val)) return
+      cell.value = val ? VPS_MEMO_PREFIX + val : VPS_MEMO_PREFIX
+    })
+  }
+
+  // 컬럼 삭제 전 인덱스 재매핑 필요
+  const hm2 = headerMap(ws)
+  const colsToDelete = VPS_DROP_HEADERS
+    .map((h) => hm2[h])
+    .filter((idx): idx is number => idx !== undefined)
+    .sort((a, b) => b - a)
+
+  for (const colIdx of colsToDelete) {
+    ws.spliceColumns(colIdx, 1)
+  }
+
+  const buffer = await workbook.xlsx.writeBuffer()
+  const keptRows = Math.max(ws.rowCount - 1, 0)
+  const removedRows = rowsToDelete.length
+
+  return {
+    buffer: Buffer.from(buffer),
+    keptRows,
+    removedRows,
+  }
+}
+
+function normMasterCode(val: ExcelJS.CellValue): string {
+  if (val === null || val === undefined) return ''
+  if (typeof val === 'number') {
+    return Number.isInteger(val) ? String(val) : String(val)
+  }
+  if (typeof val === 'boolean') return ''
+  const s = String(val).trim()
+  // 엑셀에서 "123.0" 형태로 들어온 경우 "123"으로 정규화
+  try {
+    const f = parseFloat(s)
+    if (!isNaN(f) && Number.isInteger(f)) {
+      return String(Math.round(f))
+    }
+  } catch {
+    /* parse 실패 시 원본 반환 */
+  }
+  return s
+}

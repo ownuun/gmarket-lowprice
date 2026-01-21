@@ -40,7 +40,7 @@ export default function DashboardPage() {
   const [selectedJobId, setSelectedJobId] = useState<string>('')
   const [gmarketSource, setGmarketSource] = useState<'job' | 'file'>('file')
   const [calcLoading, setCalcLoading] = useState(false)
-  const [calcResult, setCalcResult] = useState<{ matched: number; unmatched: number } | null>(null)
+  const [calcResult, setCalcResult] = useState<{ matched: number; unmatched: number; vpsKept: number; vpsRemoved: number } | null>(null)
   const [calcError, setCalcError] = useState<string | null>(null)
 
   const playautoInputRef = useRef<HTMLInputElement>(null)
@@ -250,13 +250,15 @@ export default function DashboardPage() {
 
       const matched = parseInt(res.headers.get('X-Matched-Count') || '0', 10)
       const unmatched = parseInt(res.headers.get('X-Unmatched-Count') || '0', 10)
-      setCalcResult({ matched, unmatched })
+      const vpsKept = parseInt(res.headers.get('X-VPS-Kept-Rows') || '0', 10)
+      const vpsRemoved = parseInt(res.headers.get('X-VPS-Removed-Rows') || '0', 10)
+      setCalcResult({ matched, unmatched, vpsKept, vpsRemoved })
 
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `가격계산_${new Date().toISOString().split('T')[0]}.xlsx`
+      a.download = `가격계산_${new Date().toISOString().split('T')[0]}.zip`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -640,8 +642,10 @@ export default function DashboardPage() {
                 )}
 
                 {calcResult && (
-                  <div className="p-3 bg-green-50 border border-green-200 rounded-md text-green-700 text-sm">
-                    가격 계산 완료! 매칭: {calcResult.matched}개, 미매칭: {calcResult.unmatched}개
+                  <div className="p-3 bg-green-50 border border-green-200 rounded-md text-green-700 text-sm space-y-1">
+                    <div>ZIP 파일 다운로드 완료!</div>
+                    <div>- 옥지11SSG: 매칭 {calcResult.matched}개 / 미매칭 {calcResult.unmatched}개</div>
+                    <div>- EMP(VPS): {calcResult.vpsKept}행 유지 / {calcResult.vpsRemoved}행 제거</div>
                   </div>
                 )}
 

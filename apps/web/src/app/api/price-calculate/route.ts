@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import JSZip from 'jszip'
 import {
   type GmarketIndex,
   type GmarketRecord,
@@ -11,6 +12,7 @@ import {
   parsePlayautoExcel,
   parseTemplateExcel,
   generateOutputExcel,
+  generateEmpMatchedVps,
 } from '@/lib/excel-parser'
 
 export async function POST(request: Request) {
@@ -96,6 +98,7 @@ export async function POST(request: Request) {
     }
 
     const allOutputRows: import('@/lib/price-calculator').OutputRow[] = []
+    const matchedMasterCodes = new Set<string>()
     let matchedCount = 0
     let unmatchedCount = 0
 
@@ -104,6 +107,7 @@ export async function POST(request: Request) {
       if (recs && recs.length > 0) {
         const rows = buildOutputRows(emp, recs, templateRows)
         allOutputRows.push(...rows)
+        matchedMasterCodes.add(emp.master)
         matchedCount++
       } else {
         unmatchedCount++
@@ -119,14 +123,23 @@ export async function POST(request: Request) {
 
     const outputBuffer = await generateOutputExcel(templateBuffer, allOutputRows)
 
-    const filename = `가격계산_${new Date().toISOString().split('T')[0]}.xlsx`
+    const vpsResult = await generateEmpMatchedVps(playautoBuffer, matchedMasterCodes)
 
-    return new NextResponse(new Uint8Array(outputBuffer), {
+    const dateStr = new Date().toISOString().split('T')[0]
+    const zip = new JSZip()
+    zip.file(`옥지11SSG_자동채움_${dateStr}.xlsx`, outputBuffer)
+    zip.file(`EMP_매칭된것만(VPS)_${dateStr}.xlsx`, vpsResult.buffer)
+
+    const zipBuffer = await zip.generateAsync({ type: 'arraybuffer' })
+
+    return new Response(zipBuffer, {
       headers: {
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'Content-Disposition': `attachment; filename="${encodeURIComponent(filename)}"`,
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="${encodeURIComponent(`가격계산_${dateStr}.zip`)}"`,
         'X-Matched-Count': matchedCount.toString(),
         'X-Unmatched-Count': unmatchedCount.toString(),
+        'X-VPS-Kept-Rows': vpsResult.keptRows.toString(),
+        'X-VPS-Removed-Rows': vpsResult.removedRows.toString(),
       },
     })
   } catch (error) {
