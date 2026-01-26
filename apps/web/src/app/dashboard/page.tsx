@@ -21,6 +21,19 @@ interface Job {
   archived: boolean
 }
 
+interface PriceCalcJob {
+  id: string
+  playauto_filename: string
+  template_filename: string
+  gmarket_source: string
+  matched_count: number
+  unmatched_count: number
+  vps_kept_rows: number
+  vps_removed_rows: number
+  archived: boolean
+  created_at: string
+}
+
 type MainTab = 'crawling' | 'price-calc'
 type JobListTab = 'active' | 'archived'
 
@@ -43,6 +56,11 @@ export default function DashboardPage() {
   const [calcResult, setCalcResult] = useState<{ matched: number; unmatched: number; vpsKept: number; vpsRemoved: number } | null>(null)
   const [calcError, setCalcError] = useState<string | null>(null)
 
+  const [priceCalcJobs, setPriceCalcJobs] = useState<PriceCalcJob[]>([])
+  const [archivedPriceCalcJobs, setArchivedPriceCalcJobs] = useState<PriceCalcJob[]>([])
+  const [priceCalcJobListTab, setPriceCalcJobListTab] = useState<JobListTab>('active')
+  const [priceCalcActionLoading, setPriceCalcActionLoading] = useState<{ [key: string]: 'archive' | 'delete' | null }>({})
+
   const playautoInputRef = useRef<HTMLInputElement>(null)
   const templateInputRef = useRef<HTMLInputElement>(null)
   const gmarketInputRef = useRef<HTMLInputElement>(null)
@@ -59,15 +77,23 @@ export default function DashboardPage() {
     getUser()
     fetchJobs()
     fetchArchivedJobs()
+    fetchPriceCalcJobs()
+    fetchArchivedPriceCalcJobs()
 
     const interval = setInterval(() => {
       fetchJobs()
       if (jobListTab === 'archived') {
         fetchArchivedJobs()
       }
+      if (mainTab === 'price-calc') {
+        fetchPriceCalcJobs()
+        if (priceCalcJobListTab === 'archived') {
+          fetchArchivedPriceCalcJobs()
+        }
+      }
     }, 5000)
     return () => clearInterval(interval)
-  }, [jobListTab])
+  }, [jobListTab, mainTab, priceCalcJobListTab])
 
   useEffect(() => {
     if (mainTab === 'crawling') {
@@ -96,6 +122,22 @@ export default function DashboardPage() {
     if (res.ok) {
       const data = await res.json()
       setArchivedJobs(Array.isArray(data) ? data : [])
+    }
+  }
+
+  const fetchPriceCalcJobs = async () => {
+    const res = await fetch('/api/price-calc-jobs?archived=false')
+    if (res.ok) {
+      const data = await res.json()
+      setPriceCalcJobs(Array.isArray(data) ? data : [])
+    }
+  }
+
+  const fetchArchivedPriceCalcJobs = async () => {
+    const res = await fetch('/api/price-calc-jobs?archived=true')
+    if (res.ok) {
+      const data = await res.json()
+      setArchivedPriceCalcJobs(Array.isArray(data) ? data : [])
     }
   }
 
@@ -267,11 +309,64 @@ export default function DashboardPage() {
       setCalcError(err instanceof Error ? err.message : '알 수 없는 오류')
     } finally {
       setCalcLoading(false)
+      fetchPriceCalcJobs()
     }
+  }
+
+  const handleDeletePriceCalc = async (jobId: string) => {
+    if (!confirm('이 계산 이력을 삭제하시겠습니까?')) return
+
+    setPriceCalcActionLoading((prev) => ({ ...prev, [jobId]: 'delete' }))
+
+    const res = await fetch(`/api/price-calc-jobs/${jobId}`, {
+      method: 'DELETE',
+    })
+
+    if (res.ok) {
+      setPriceCalcJobs((prev) => prev.filter((j) => j.id !== jobId))
+      setArchivedPriceCalcJobs((prev) => prev.filter((j) => j.id !== jobId))
+    } else {
+      fetchPriceCalcJobs()
+      fetchArchivedPriceCalcJobs()
+    }
+
+    setPriceCalcActionLoading((prev) => ({ ...prev, [jobId]: null }))
+  }
+
+  const handleArchivePriceCalc = async (jobId: string, archive: boolean) => {
+    setPriceCalcActionLoading((prev) => ({ ...prev, [jobId]: 'archive' }))
+
+    const res = await fetch(`/api/price-calc-jobs/${jobId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archived: archive }),
+    })
+
+    if (res.ok) {
+      if (archive) {
+        const job = priceCalcJobs.find((j) => j.id === jobId)
+        if (job) {
+          setPriceCalcJobs((prev) => prev.filter((j) => j.id !== jobId))
+          setArchivedPriceCalcJobs((prev) => [{ ...job, archived: true }, ...prev])
+        }
+      } else {
+        const job = archivedPriceCalcJobs.find((j) => j.id === jobId)
+        if (job) {
+          setArchivedPriceCalcJobs((prev) => prev.filter((j) => j.id !== jobId))
+          setPriceCalcJobs((prev) => [{ ...job, archived: false }, ...prev])
+        }
+      }
+    } else {
+      fetchPriceCalcJobs()
+      fetchArchivedPriceCalcJobs()
+    }
+
+    setPriceCalcActionLoading((prev) => ({ ...prev, [jobId]: null }))
   }
 
   const completedJobs = jobs.filter((j) => j.status === 'completed')
   const currentJobs = jobListTab === 'active' ? jobs : archivedJobs
+  const currentPriceCalcJobs = priceCalcJobListTab === 'active' ? priceCalcJobs : archivedPriceCalcJobs
 
   return (
     <main className="min-h-screen p-4 md:p-8">
@@ -450,7 +545,8 @@ export default function DashboardPage() {
         )}
 
         {mainTab === 'price-calc' && (
-          <Card>
+          <>
+          <Card className="mb-8">
             <CardHeader>
               <CardTitle>가격 계산</CardTitle>
               <CardDescription>
@@ -665,6 +761,98 @@ export default function DashboardPage() {
               </form>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex justify-between items-center">
+                <CardTitle>계산 이력</CardTitle>
+                <div className="flex gap-1 bg-muted p-1 rounded-lg">
+                  <button
+                    onClick={() => setPriceCalcJobListTab('active')}
+                    className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                      priceCalcJobListTab === 'active'
+                        ? 'bg-background shadow-sm font-medium'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    활성 ({priceCalcJobs.length})
+                  </button>
+                  <button
+                    onClick={() => {
+                      setPriceCalcJobListTab('archived')
+                      fetchArchivedPriceCalcJobs()
+                    }}
+                    className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+                      priceCalcJobListTab === 'archived'
+                        ? 'bg-background shadow-sm font-medium'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    보관함 ({archivedPriceCalcJobs.length})
+                  </button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {currentPriceCalcJobs.length === 0 ? (
+                <p className="text-muted-foreground text-center py-8">
+                  {priceCalcJobListTab === 'active' ? '계산 이력이 없습니다' : '보관된 이력이 없습니다'}
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  {currentPriceCalcJobs.map((job) => (
+                    <div key={job.id} className="border rounded-lg p-4">
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="space-y-1">
+                          <div className="font-medium text-sm">{job.playauto_filename}</div>
+                          <div className="text-xs text-muted-foreground">
+                            매칭 {job.matched_count}개 / 미매칭 {job.unmatched_count}개
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            VPS: {job.vps_kept_rows}행 유지 / {job.vps_removed_rows}행 제거
+                          </div>
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          {new Date(job.created_at).toLocaleString('ko-KR')}
+                        </div>
+                      </div>
+                      <div className="flex gap-2 mt-3">
+                        {priceCalcJobListTab === 'active' ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={!!priceCalcActionLoading[job.id]}
+                            onClick={() => handleArchivePriceCalc(job.id, true)}
+                          >
+                            {priceCalcActionLoading[job.id] === 'archive' ? '보관중...' : '보관'}
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={!!priceCalcActionLoading[job.id]}
+                            onClick={() => handleArchivePriceCalc(job.id, false)}
+                          >
+                            {priceCalcActionLoading[job.id] === 'archive' ? '복원중...' : '복원'}
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                          disabled={!!priceCalcActionLoading[job.id]}
+                          onClick={() => handleDeletePriceCalc(job.id)}
+                        >
+                          {priceCalcActionLoading[job.id] === 'delete' ? '삭제중...' : '삭제'}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+          </>
         )}
       </div>
     </main>

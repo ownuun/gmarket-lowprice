@@ -132,6 +132,21 @@ export async function POST(request: Request) {
 
     const zipBuffer = await zip.generateAsync({ type: 'arraybuffer' })
 
+    const gmarketSourceStr = jobId
+      ? `job:${jobId}`
+      : `file:${gmarketFile?.name || 'unknown'}`
+
+    await supabase.from('price_calc_jobs').insert({
+      user_id: user.id,
+      playauto_filename: playautoFile.name,
+      template_filename: templateFile.name,
+      gmarket_source: gmarketSourceStr,
+      matched_count: matchedCount,
+      unmatched_count: unmatchedCount,
+      vps_kept_rows: vpsResult.keptRows,
+      vps_removed_rows: vpsResult.removedRows,
+    })
+
     return new Response(zipBuffer, {
       headers: {
         'Content-Type': 'application/zip',
