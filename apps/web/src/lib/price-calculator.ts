@@ -72,7 +72,9 @@ export function parsePrice(v: string | number | null | undefined): number | null
 // 가격 선택 로직
 export interface PriceResult {
   basePrice: number // 기본금액 (동시존재 시 할인율 9 가격)
+  baseDisc: number | null // 기본 할인율
   altPrice: number // 13 가격 (동시존재 시)
+  altDisc: number | null // 대체 할인율
   seller9: string | null // base_price 주체 판매자 (동시존재 + 할인율9 있을 때)
   both: boolean // 계양+H1 동시 존재 여부
 }
@@ -83,33 +85,46 @@ export function choosePricesForModel(recs: GmarketRecord[]): PriceResult {
 
   // 특수 판매자 없음 → 전체 최저가
   if (specials.length === 0) {
-    const p = Math.min(...recs.map((r) => r.price))
-    return { basePrice: p, altPrice: p, seller9: null, both: false }
+    const best = recs.reduce((min, r) => (r.price < min.price ? r : min))
+    return { basePrice: best.price, baseDisc: best.discount, altPrice: best.price, altDisc: best.discount, seller9: null, both: false }
   }
 
   // 계양 또는 H1 단독
   if (!(sellers.has(SELLER_KEYANG) && sellers.has(SELLER_H1))) {
-    const p = Math.min(...specials.map((r) => r.price))
-    return { basePrice: p, altPrice: p, seller9: null, both: false }
+    const best = specials.reduce((min, r) => (r.price < min.price ? r : min))
+    return { basePrice: best.price, baseDisc: best.discount, altPrice: best.price, altDisc: best.discount, seller9: null, both: false }
   }
 
   // 계양 + H1 동시 존재
   const d9 = specials.filter((r) => r.discount === 9)
   let basePrice: number
+  let baseDisc: number | null = null
   let seller9: string | null = null
 
   if (d9.length > 0) {
     const best9 = d9.reduce((min, r) => (r.price < min.price ? r : min))
     basePrice = best9.price
+    baseDisc = 9
     seller9 = best9.seller
   } else {
-    basePrice = Math.min(...specials.map((r) => r.price))
+    const best = specials.reduce((min, r) => (r.price < min.price ? r : min))
+    basePrice = best.price
+    baseDisc = best.discount
   }
 
   const d13 = specials.filter((r) => r.discount === 13)
-  const altPrice = d13.length > 0 ? Math.min(...d13.map((r) => r.price)) : basePrice
+  let altPrice: number
+  let altDisc: number | null
 
-  return { basePrice, altPrice, seller9, both: true }
+  if (d13.length > 0) {
+    altPrice = Math.min(...d13.map((r) => r.price))
+    altDisc = 13
+  } else {
+    altPrice = basePrice
+    altDisc = baseDisc
+  }
+
+  return { basePrice, baseDisc, altPrice, altDisc, seller9, both: true }
 }
 
 // 단일 상품에 대해 모든 쇼핑몰 행 생성
@@ -118,7 +133,7 @@ export function buildOutputRows(
   gmarketRecs: GmarketRecord[],
   templateRows: TemplateRow[]
 ): OutputRow[] {
-  const { basePrice, altPrice, seller9, both } = choosePricesForModel(gmarketRecs)
+  const { basePrice, baseDisc, altPrice, altDisc, seller9, both } = choosePricesForModel(gmarketRecs)
 
   // seller9에 해당하는 쇼핑몰 ID
   let baseA522Id: string | null = null
@@ -132,24 +147,38 @@ export function buildOutputRows(
 
   for (const tpl of templateRows) {
     let priceForRow = basePrice
+    let discForRow = baseDisc
 
     if (both) {
       // 동시존재 시: A032, A113는 13(alt) 따라감
       if (tpl.mallCode === 'A032' || tpl.mallCode === 'A113') {
         priceForRow = altPrice
+        discForRow = altDisc
       }
       // 동시존재 시: A522/A523는 9 판매자 ID행만 base, 나머지는 alt
       else if ((tpl.mallCode === 'A522' || tpl.mallCode === 'A523') && seller9) {
         if (tpl.mallCode === 'A522') {
-          priceForRow = baseA522Id && tpl.mallId === baseA522Id ? basePrice : altPrice
+          if (baseA522Id && tpl.mallId === baseA522Id) {
+            priceForRow = basePrice
+            discForRow = baseDisc
+          } else {
+            priceForRow = altPrice
+            discForRow = altDisc
+          }
         } else {
-          priceForRow = baseA523Id && tpl.mallId === baseA523Id ? basePrice : altPrice
+          if (baseA523Id && tpl.mallId === baseA523Id) {
+            priceForRow = basePrice
+            discForRow = baseDisc
+          } else {
+            priceForRow = altPrice
+            discForRow = altDisc
+          }
         }
       }
     }
 
-    // SSG(A032)만 -10
-    if (tpl.mallCode === 'A032') {
+    // SSG(A032): 적용된 할인율이 13일 때만 -10
+    if (tpl.mallCode === 'A032' && discForRow === 13) {
       priceForRow = priceForRow - 10
     }
 
