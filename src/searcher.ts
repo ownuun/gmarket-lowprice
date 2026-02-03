@@ -8,8 +8,8 @@ export class GmarketSearcher {
   private parser: GmarketParser;
 
   private static BASE_URL = 'https://www.gmarket.co.kr';
-  // s=1 = 낮은가격순, c=100000076 + f=c:100000076 = 공구 카테고리 필터
   private static FILTER_PARAMS = '&s=1&c=100000076&f=c:100000076';
+  private static SEARCH_INPUT_SELECTORS = 'input[name="keyword"], input.box__keyword-input';
 
   constructor(browser: BrowserManager) {
     this.browser = browser;
@@ -17,7 +17,6 @@ export class GmarketSearcher {
   }
 
   buildFilteredUrl(baseSearchUrl: string): string {
-    // 이미 파라미터가 있으면 추가하지 않음
     if (baseSearchUrl.includes('s=1')) return baseSearchUrl;
     return baseSearchUrl + GmarketSearcher.FILTER_PARAMS;
   }
@@ -28,14 +27,37 @@ export class GmarketSearcher {
     const { page, context } = await this.browser.newPage();
 
     try {
-      const searchUrl = `${GmarketSearcher.BASE_URL}/n/search?keyword=${encodeURIComponent(modelName)}${GmarketSearcher.FILTER_PARAMS}`;
-      console.log(`  URL: ${searchUrl}`);
+      console.log('  메인 페이지 접속...');
+      await page.goto(GmarketSearcher.BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page.waitForTimeout(2000);
+      console.log('  검색창 타이핑...');
+      const searchInput = await this.waitForSearchInput(page);
+      if (!searchInput) {
+        return {
+          modelName,
+          products: [],
+          error: '검색창을 찾지 못함',
+        };
+      }
+
+      await searchInput.click();
+      await page.waitForTimeout(300);
+      await searchInput.fill(modelName);
+      await page.waitForTimeout(300);
+
+      console.log('  검색 실행...');
+      await searchInput.press('Enter');
+      await page.waitForTimeout(5000);
+
+      const currentUrl = page.url();
+      const filteredUrl = this.buildFilteredUrl(currentUrl);
+      console.log(`  검색결과: ${filteredUrl}`);
+
+      await page.goto(filteredUrl, { waitUntil: 'domcontentloaded' });
+      await page.waitForTimeout(3000);
 
       await this.waitForProducts(page);
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(2000);
 
       let screenshotPath: string | undefined;
       if (takeScreenshot) {
@@ -49,7 +71,7 @@ export class GmarketSearcher {
       return {
         modelName,
         products,
-        searchUrl,
+        searchUrl: filteredUrl,
         screenshotPath,
       };
 
@@ -63,6 +85,15 @@ export class GmarketSearcher {
       };
     } finally {
       await context.close();
+    }
+  }
+
+  private async waitForSearchInput(page: Page): Promise<any> {
+    try {
+      await page.waitForSelector(GmarketSearcher.SEARCH_INPUT_SELECTORS, { timeout: 10000 });
+      return await page.$(GmarketSearcher.SEARCH_INPUT_SELECTORS);
+    } catch {
+      return null;
     }
   }
 
