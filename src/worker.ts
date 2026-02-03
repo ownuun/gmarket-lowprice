@@ -15,7 +15,7 @@ const MAX_DELAY = 8000 // 최대 딜레이 (8초)
 // 브라우저 재시작 설정
 const BROWSER_RESTART_INTERVAL = 24 * 60 * 60 * 1000 // 24시간
 const BROWSER_RESTART_AFTER_JOBS = 50 // 50개 작업 후 재시작
-const BROWSER_RESTART_EVERY_N_SEARCHES = 4 // N회 검색마다 브라우저 재시작 (봇 감지 우회)
+const BROWSER_RESTART_EVERY_N_SEARCHES = 2 // N회 검색마다 브라우저 재시작 (봇 감지 우회)
 const MAX_RETRY_ON_BROWSER_ERROR = 2 // 브라우저 에러 시 최대 재시도 횟수
 
 // 브라우저 상태 추적
