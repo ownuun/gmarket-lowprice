@@ -34,6 +34,17 @@ export class BrowserManager {
     }
   }
 
+  async restart(): Promise<void> {
+    console.log('[브라우저] 재시작 중...');
+    await this.stop();
+    await this.start();
+    console.log('[브라우저] 재시작 완료');
+  }
+
+  isRunning(): boolean {
+    return this.browser !== null;
+  }
+
   async newPage(): Promise<{ page: Page; context: BrowserContext }> {
     if (!this.browser) throw new Error('Browser not started');
 
