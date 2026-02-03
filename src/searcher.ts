@@ -28,7 +28,7 @@ export class GmarketSearcher {
 
     try {
       console.log('  메인 페이지 접속...');
-      await page.goto(GmarketSearcher.BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.goto(GmarketSearcher.BASE_URL, { waitUntil: 'load', timeout: 60000 });
 
       console.log('  검색창 타이핑...');
       const searchInput = await this.waitForSearchInput(page);
