@@ -15,6 +15,7 @@ const MAX_DELAY = 8000 // 최대 딜레이 (8초)
 // 브라우저 재시작 설정
 const BROWSER_RESTART_INTERVAL = 24 * 60 * 60 * 1000 // 24시간
 const BROWSER_RESTART_AFTER_JOBS = 50 // 50개 작업 후 재시작
+const BROWSER_RESTART_EVERY_N_SEARCHES = 4 // N회 검색마다 브라우저 재시작 (봇 감지 우회)
 const MAX_RETRY_ON_BROWSER_ERROR = 2 // 브라우저 에러 시 최대 재시도 횟수
 
 // 브라우저 상태 추적
@@ -217,12 +218,21 @@ async function processJob(browser: BrowserManager, searcher: GmarketSearcher, jo
 
   const itemChunks = chunk(items as JobItem[], CONCURRENCY)
   let currentSearcher = searcher
+  let searchCount = 0
 
   for (const batch of itemChunks) {
     console.log(`[배치] ${batch.map(i => i.model_name).join(', ')} 동시 처리`)
 
     for (const item of batch) {
+      if (searchCount > 0 && searchCount % BROWSER_RESTART_EVERY_N_SEARCHES === 0) {
+        console.log(`[브라우저] ${searchCount}회 검색 완료, 선제 재시작`)
+        await browser.restart()
+        lastBrowserRestart = Date.now()
+        jobsSinceRestart = 0
+        currentSearcher = new GmarketSearcher(browser)
+      }
       currentSearcher = await processJobItem(browser, currentSearcher, item)
+      searchCount++
     }
 
     if (batch !== itemChunks[itemChunks.length - 1]) {
