@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import type { Browser, BrowserContext, Page } from 'playwright';
@@ -7,7 +8,24 @@ import path from 'path';
 // Stealth 플러그인 적용 (Cloudflare 우회)
 chromium.use(StealthPlugin());
 
-const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+// 프록시 설정 (DataImpulse Residential Proxy)
+const PROXY_HOST = process.env.PROXY_HOST || '';
+const PROXY_PORT = process.env.PROXY_PORT || '823';
+const PROXY_USERNAME = process.env.PROXY_USERNAME || '';
+const PROXY_PASSWORD = process.env.PROXY_PASSWORD || '';
+
+function getProxyConfig() {
+  if (!PROXY_HOST || !PROXY_USERNAME || !PROXY_PASSWORD) {
+    return undefined;
+  }
+  return {
+    server: `http://${PROXY_HOST}:${PROXY_PORT}`,
+    username: PROXY_USERNAME,
+    password: PROXY_PASSWORD,
+  };
+}
 
 export class BrowserManager {
   private browser: Browser | null = null;
@@ -22,8 +40,16 @@ export class BrowserManager {
   async start(): Promise<void> {
     await mkdir(this.screenshotsDir, { recursive: true });
 
+    const proxy = getProxyConfig();
+    if (proxy) {
+      console.log(`[브라우저] 프록시 사용: ${PROXY_HOST}:${PROXY_PORT} (${PROXY_USERNAME.includes('country') ? PROXY_USERNAME.split('_').pop() : 'default'})`);
+    } else {
+      console.log('[브라우저] 프록시 없이 직접 연결');
+    }
+
     this.browser = await chromium.launch({
       headless: this.headless,
+      ...(proxy ? { proxy } : {}),
     });
   }
 

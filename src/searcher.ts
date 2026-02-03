@@ -41,23 +41,23 @@ export class GmarketSearcher {
       }
 
       await searchInput.click();
-      await page.waitForTimeout(300);
+      await page.waitForTimeout(100);
       await searchInput.fill(modelName);
-      await page.waitForTimeout(300);
+      await page.waitForTimeout(100);
 
       console.log('  검색 실행...');
       await searchInput.press('Enter');
-      await page.waitForTimeout(5000);
+      await page.waitForTimeout(2000);
 
       const currentUrl = page.url();
       const filteredUrl = this.buildFilteredUrl(currentUrl);
       console.log(`  검색결과: ${filteredUrl}`);
 
       await page.goto(filteredUrl, { waitUntil: 'domcontentloaded' });
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(1500);
 
       await this.waitForProducts(page);
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1000);
 
       let screenshotPath: string | undefined;
       if (takeScreenshot) {
@@ -90,8 +90,7 @@ export class GmarketSearcher {
 
   private async waitForSearchInput(page: Page): Promise<any> {
     try {
-      // 60초까지 기다림 - 재시도보다 한 번에 기다리는 게 효율적
-      await page.waitForSelector(GmarketSearcher.SEARCH_INPUT_SELECTORS, { timeout: 60000 });
+      await page.waitForSelector(GmarketSearcher.SEARCH_INPUT_SELECTORS, { timeout: 15000 });
       return await page.$(GmarketSearcher.SEARCH_INPUT_SELECTORS);
     } catch {
       return null;
