@@ -90,7 +90,8 @@ export class GmarketSearcher {
 
   private async waitForSearchInput(page: Page): Promise<any> {
     try {
-      await page.waitForSelector(GmarketSearcher.SEARCH_INPUT_SELECTORS, { timeout: 20000 });
+      // 60초까지 기다림 - 재시도보다 한 번에 기다리는 게 효율적
+      await page.waitForSelector(GmarketSearcher.SEARCH_INPUT_SELECTORS, { timeout: 60000 });
       return await page.$(GmarketSearcher.SEARCH_INPUT_SELECTORS);
     } catch {
       return null;
