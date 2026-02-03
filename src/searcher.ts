@@ -28,59 +28,28 @@ export class GmarketSearcher {
     const { page, context } = await this.browser.newPage();
 
     try {
-      // 1. 메인 페이지 접속 (세션 확립)
-      console.log('  메인 페이지 접속...');
-      await page.goto(GmarketSearcher.BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await page.waitForTimeout(3000);
+      const searchUrl = `${GmarketSearcher.BASE_URL}/n/search?keyword=${encodeURIComponent(modelName)}${GmarketSearcher.FILTER_PARAMS}`;
+      console.log(`  URL: ${searchUrl}`);
 
-      // 2. 검색창 타이핑
-      console.log('  검색창 타이핑...');
-      const searchInput = await page.$('input[name="keyword"], input.box__keyword-input');
-      if (!searchInput) {
-        return {
-          modelName,
-          products: [],
-          error: '검색창을 찾지 못함',
-        };
-      }
-
-      await searchInput.click();
-      await page.waitForTimeout(500);
-      await searchInput.fill(modelName);
-      await page.waitForTimeout(500);
-
-      // 3. Enter로 검색
-      console.log('  검색 실행...');
-      await searchInput.press('Enter');
-      await page.waitForTimeout(5000);
-
-      // 4. URL에 필터/정렬 파라미터 추가
-      const currentUrl = page.url();
-      const filteredUrl = this.buildFilteredUrl(currentUrl);
-      console.log(`  검색결과: ${filteredUrl}`);
-
-      await page.goto(filteredUrl, { waitUntil: 'domcontentloaded' });
-      await page.waitForTimeout(3000);
-
-      // 상품 목록 로드 대기
-      await this.waitForProducts(page);
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForTimeout(2000);
 
-      // 스크린샷 (디버깅용)
+      await this.waitForProducts(page);
+      await page.waitForTimeout(1000);
+
       let screenshotPath: string | undefined;
       if (takeScreenshot) {
         screenshotPath = await this.browser.takeScreenshot(page, modelName);
         console.log(`  스크린샷: ${screenshotPath}`);
       }
 
-      // 첫 번째 상품(최저가) 파싱
       const products = await this.parser.parseSearchResults(page, modelName);
       console.log(`  파싱 결과: ${products.length}개`);
 
       return {
         modelName,
         products,
-        searchUrl: filteredUrl,
+        searchUrl,
         screenshotPath,
       };
 
