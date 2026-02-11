@@ -2,28 +2,45 @@ import 'dotenv/config'
 import { createClient } from '@supabase/supabase-js'
 import { BrowserManager } from './browser.js'
 import { GmarketSearcher } from './searcher.js'
+import { IncidentTracker, type IncidentSettings } from './incident.js'
 import type { Product } from './types.js'
 
-// 환경변수
 const SUPABASE_URL = process.env.SUPABASE_URL!
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY!
-const POLL_INTERVAL = 3000 // 3초마다 폴링
-const CONCURRENCY = 1 // 동시 처리 개수 (1=순차, 2=병렬)
-const MIN_DELAY = 1000 // 최소 딜레이 (1초) - 프록시가 IP 로테이션하므로 축소
-const MAX_DELAY = 3000 // 최대 딜레이 (3초) - 프록시가 IP 로테이션하므로 축소
+const POLL_INTERVAL = 3000
+const CONCURRENCY = 1
+const MIN_DELAY = 2000
+const MAX_DELAY = 5000
 
-// 브라우저 재시작 설정
-const BROWSER_RESTART_INTERVAL = 24 * 60 * 60 * 1000 // 24시간
-const BROWSER_RESTART_AFTER_JOBS = 200 // 200개 작업 후 재시작 (프록시 환경에서 완화)
-const BROWSER_RESTART_EVERY_N_SEARCHES = 10 // 10회 검색마다 재시작 (프록시가 IP 로테이션하므로 완화)
-const MAX_RETRY_ON_BROWSER_ERROR = 2 // 브라우저 에러 시 최대 재시도 횟수
+const CONTEXT_ROTATION_EVERY = 30
+const CONTEXT_COOLDOWN_MS = 8000
+const BROWSER_RESTART_INTERVAL = 24 * 60 * 60 * 1000
+const BROWSER_RESTART_AFTER_JOBS = 300
+const MAX_RETRY_ON_BROWSER_ERROR = 2
+const MAX_RETRY_ON_BLOCKED = 2
 
-// 브라우저 상태 추적
 let lastBrowserRestart = Date.now()
 let jobsSinceRestart = 0
+let searchesSinceContextRotation = 0
 
-// Supabase 클라이언트 (service_role 키 사용 - RLS 우회)
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+const PROXY_HOST = process.env.PROXY_HOST || ''
+const PROXY_USERNAME = process.env.PROXY_USERNAME || ''
+
+function buildIncidentSettings(): IncidentSettings {
+  const proxy = PROXY_HOST
+    ? `${PROXY_HOST} (${PROXY_USERNAME.includes('country') ? PROXY_USERNAME.split('_').pop() : 'default'})`
+    : 'direct'
+  return {
+    delayRange: [MIN_DELAY, MAX_DELAY],
+    contextRotationEvery: CONTEXT_ROTATION_EVERY,
+    contextCooldownMs: CONTEXT_COOLDOWN_MS,
+    proxy,
+    userAgent: 'rotating',
+    viewport: 'rotating',
+  }
+}
 
 interface JobItem {
   id: string
@@ -90,7 +107,7 @@ function transformProduct(product: Product, searchUrl?: string) {
   }
 }
 
-async function shouldRestartBrowser(): Promise<boolean> {
+function shouldRestartBrowser(): boolean {
   const timeSinceRestart = Date.now() - lastBrowserRestart
   if (timeSinceRestart >= BROWSER_RESTART_INTERVAL) {
     console.log(`[브라우저] ${Math.floor(timeSinceRestart / 1000 / 60 / 60)}시간 경과, 재시작 필요`)
@@ -104,19 +121,39 @@ async function shouldRestartBrowser(): Promise<boolean> {
 }
 
 async function restartBrowserIfNeeded(browser: BrowserManager): Promise<GmarketSearcher> {
-  if (await shouldRestartBrowser()) {
+  if (shouldRestartBrowser()) {
     await browser.restart()
     lastBrowserRestart = Date.now()
     jobsSinceRestart = 0
+    searchesSinceContextRotation = 0
   }
   return new GmarketSearcher(browser)
+}
+
+async function rotateContextIfNeeded(browser: BrowserManager, searcher: GmarketSearcher, tracker?: IncidentTracker): Promise<GmarketSearcher> {
+  if (searchesSinceContextRotation >= CONTEXT_ROTATION_EVERY) {
+    console.log(`[Context] ${searchesSinceContextRotation}회 검색 완료, Context 교체`)
+    const cooldown = CONTEXT_COOLDOWN_MS + Math.random() * 4000
+    await browser.rotateContext(cooldown)
+    searchesSinceContextRotation = 0
+    tracker?.recordContextRotation()
+    const newSearcher = new GmarketSearcher(browser)
+    return newSearcher
+  }
+  return searcher
+}
+
+interface ProcessResult {
+  searcher: GmarketSearcher;
+  blocked: boolean;
 }
 
 async function processJobItem(
   browser: BrowserManager,
   searcher: GmarketSearcher,
-  item: JobItem
-): Promise<GmarketSearcher> {
+  item: JobItem,
+  tracker: IncidentTracker,
+): Promise<ProcessResult> {
   console.log(`[처리] ${item.model_name} (${item.sequence})`)
 
   try {
@@ -128,17 +165,40 @@ async function processJobItem(
     let result = await searcher.search(item.model_name, false)
     let retryCount = 0
 
-    while (result.error && isBrowserError(result.error) && retryCount < MAX_RETRY_ON_BROWSER_ERROR) {
+    while (result.error === 'BLOCKED' && retryCount < MAX_RETRY_ON_BLOCKED) {
+      retryCount++
+      console.log(`[차단 재시도] ${item.model_name} - Context 교체 후 재시도 (${retryCount}/${MAX_RETRY_ON_BLOCKED})`)
+      const cooldown = CONTEXT_COOLDOWN_MS + Math.random() * 6000
+      await browser.rotateContext(cooldown)
+      searchesSinceContextRotation = 0
+      tracker.recordContextRotation()
+      searcher = new GmarketSearcher(browser)
+      result = await searcher.search(item.model_name, false)
+    }
+
+    retryCount = 0
+    while (result.error && result.error !== 'BLOCKED' && isBrowserError(result.error) && retryCount < MAX_RETRY_ON_BROWSER_ERROR) {
       retryCount++
       console.log(`[재시도] ${item.model_name} - 브라우저 재시작 후 재시도 (${retryCount}/${MAX_RETRY_ON_BROWSER_ERROR})`)
       await browser.restart()
       lastBrowserRestart = Date.now()
       jobsSinceRestart = 0
+      searchesSinceContextRotation = 0
+      tracker.recordBrowserRestart()
       searcher = new GmarketSearcher(browser)
       result = await searcher.search(item.model_name, false)
     }
 
+    searchesSinceContextRotation++
+
     if (result.error) {
+      const verdict = await tracker.recordFailure(
+        item.model_name,
+        result.error,
+        result.screenshotPath,
+        result.pageSnippet,
+      )
+
       await supabase
         .from('job_items')
         .update({
@@ -149,7 +209,13 @@ async function processJobItem(
         .eq('id', item.id)
 
       await supabase.rpc('increment_job_failed', { job_id: item.job_id })
+
+      if (verdict === 'BLOCKED_CONFIRMED') {
+        return { searcher, blocked: true }
+      }
     } else {
+      tracker.recordSuccess(item.model_name, result.products.length)
+
       const transformedProducts = result.products.map((p) =>
         transformProduct(p, result.searchUrl)
       )
@@ -169,6 +235,8 @@ async function processJobItem(
     const error = e instanceof Error ? e.message : String(e)
     console.error(`[에러] ${item.model_name}: ${error}`)
 
+    await tracker.recordFailure(item.model_name, error)
+
     await supabase
       .from('job_items')
       .update({
@@ -181,7 +249,7 @@ async function processJobItem(
     await supabase.rpc('increment_job_failed', { job_id: item.job_id })
   }
 
-  return searcher
+  return { searcher, blocked: false }
 }
 
 function isBrowserError(error: string): boolean {
@@ -196,7 +264,17 @@ function isBrowserError(error: string): boolean {
   return browserErrors.some(e => error.includes(e))
 }
 
-async function processJob(browser: BrowserManager, searcher: GmarketSearcher, job: Job): Promise<GmarketSearcher> {
+interface JobResult {
+  searcher: GmarketSearcher;
+  blocked: boolean;
+}
+
+async function processJob(
+  browser: BrowserManager,
+  searcher: GmarketSearcher,
+  job: Job,
+  tracker: IncidentTracker,
+): Promise<JobResult> {
   console.log(`\n[작업 시작] Job ${job.id}`)
 
   await supabase
@@ -213,26 +291,28 @@ async function processJob(browser: BrowserManager, searcher: GmarketSearcher, jo
 
   if (error || !items) {
     console.error(`[에러] Job items 조회 실패: ${error?.message}`)
-    return searcher
+    return { searcher, blocked: false }
   }
 
   const itemChunks = chunk(items as JobItem[], CONCURRENCY)
   let currentSearcher = searcher
-  let searchCount = 0
 
   for (const batch of itemChunks) {
-    console.log(`[배치] ${batch.map(i => i.model_name).join(', ')} 동시 처리`)
+    console.log(`[배치] ${batch.map(i => i.model_name).join(', ')} 처리`)
 
     for (const item of batch) {
-      if (searchCount > 0 && searchCount % BROWSER_RESTART_EVERY_N_SEARCHES === 0) {
-        console.log(`[브라우저] ${searchCount}회 검색 완료, 선제 재시작`)
-        await browser.restart()
-        lastBrowserRestart = Date.now()
-        jobsSinceRestart = 0
-        currentSearcher = new GmarketSearcher(browser)
+      currentSearcher = await rotateContextIfNeeded(browser, currentSearcher, tracker)
+      const result = await processJobItem(browser, currentSearcher, item, tracker)
+      currentSearcher = result.searcher
+
+      if (result.blocked) {
+        console.log(`[인시던트] Job ${job.id} 일시 중지 (봇 탐지)`)
+        await supabase
+          .from('jobs')
+          .update({ status: 'paused', error_message: 'Bot detection confirmed' })
+          .eq('id', job.id)
+        return { searcher: currentSearcher, blocked: true }
       }
-      currentSearcher = await processJobItem(browser, currentSearcher, item)
-      searchCount++
     }
 
     if (batch !== itemChunks[itemChunks.length - 1]) {
@@ -265,10 +345,14 @@ async function processJob(browser: BrowserManager, searcher: GmarketSearcher, jo
     }
   }
 
-  return currentSearcher
+  return { searcher: currentSearcher, blocked: false }
 }
 
-async function pollForJobs(browser: BrowserManager, searcher: GmarketSearcher): Promise<GmarketSearcher> {
+async function pollForJobs(
+  browser: BrowserManager,
+  searcher: GmarketSearcher,
+  tracker: IncidentTracker,
+): Promise<JobResult> {
   const { data: jobs, error } = await supabase
     .from('jobs')
     .select('*')
@@ -278,14 +362,14 @@ async function pollForJobs(browser: BrowserManager, searcher: GmarketSearcher): 
 
   if (error) {
     console.error(`[에러] Jobs 조회 실패: ${error.message}`)
-    return searcher
+    return { searcher, blocked: false }
   }
 
   if (jobs && jobs.length > 0) {
-    return await processJob(browser, searcher, jobs[0] as Job)
+    return await processJob(browser, searcher, jobs[0] as Job, tracker)
   }
 
-  return searcher
+  return { searcher, blocked: false }
 }
 
 async function main(): Promise<void> {
@@ -301,9 +385,10 @@ async function main(): Promise<void> {
   const browser = new BrowserManager(true)
   await browser.start()
   let searcher = new GmarketSearcher(browser)
+  const tracker = new IncidentTracker(buildIncidentSettings())
 
   console.log('[준비] 브라우저 시작 완료')
-  console.log(`[설정] 동시처리: ${CONCURRENCY}개, 딜레이: ${MIN_DELAY/1000}-${MAX_DELAY/1000}초`)
+  console.log(`[설정] 딜레이: ${MIN_DELAY/1000}-${MAX_DELAY/1000}초, Context 교체: ${CONTEXT_ROTATION_EVERY}회마다`)
   console.log(`[설정] 브라우저 재시작: ${BROWSER_RESTART_INTERVAL/1000/60/60}시간 또는 ${BROWSER_RESTART_AFTER_JOBS}개 작업마다`)
   console.log(`[대기] ${POLL_INTERVAL / 1000}초마다 작업 확인 중...\n`)
 
@@ -317,7 +402,18 @@ async function main(): Promise<void> {
 
   while (running) {
     searcher = await restartBrowserIfNeeded(browser)
-    searcher = await pollForJobs(browser, searcher)
+    searcher = await rotateContextIfNeeded(browser, searcher, tracker)
+    const result = await pollForJobs(browser, searcher, tracker)
+    searcher = result.searcher
+
+    if (result.blocked) {
+      console.log('\n[인시던트] 봇 탐지로 워커 중지. data/incidents/ 확인 필요.')
+      const stats = tracker.getStats()
+      console.log(`[인시던트] 총 검색: ${stats.totalSearches}, Context 교체: ${stats.contextRotationCount}회, 가동: ${stats.uptimeMinutes}분`)
+      await browser.stop()
+      process.exit(1)
+    }
+
     await delay(POLL_INTERVAL)
   }
 }

@@ -3,17 +3,36 @@ import { BrowserManager } from './browser.js';
 import { GmarketParser } from './parser.js';
 import type { SearchResult } from './types.js';
 
+const BLOCKED_SIGNALS = [
+  'captcha',
+  'robot',
+  '자동화',
+  'blocked',
+  'access denied',
+  'unusual traffic',
+];
+
 export class GmarketSearcher {
   private browser: BrowserManager;
   private parser: GmarketParser;
+  private sessionEstablished = false;
 
   private static BASE_URL = 'https://www.gmarket.co.kr';
+  private static SEARCH_URL = 'https://browse.gmarket.co.kr/search';
   private static FILTER_PARAMS = '&s=1&c=100000076&f=c:100000076';
-  private static SEARCH_INPUT_SELECTORS = 'input[name="keyword"], input.box__keyword-input';
 
   constructor(browser: BrowserManager) {
     this.browser = browser;
     this.parser = new GmarketParser();
+    this.sessionEstablished = false;
+  }
+
+  resetSession(): void {
+    this.sessionEstablished = false;
+  }
+
+  private buildDirectSearchUrl(keyword: string): string {
+    return `${GmarketSearcher.SEARCH_URL}?keyword=${encodeURIComponent(keyword)}${GmarketSearcher.FILTER_PARAMS}`;
   }
 
   buildFilteredUrl(baseSearchUrl: string): string {
@@ -24,40 +43,34 @@ export class GmarketSearcher {
   async search(modelName: string, takeScreenshot = true): Promise<SearchResult> {
     console.log(`\n[검색] ${modelName}`);
 
-    const { page, context } = await this.browser.newPage();
+    const page = await this.browser.newPageInContext();
 
     try {
-      console.log('  메인 페이지 접속...');
-      await page.goto(GmarketSearcher.BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      if (!this.sessionEstablished) {
+        await this.establishSession(page);
+      }
 
-      console.log('  검색창 타이핑...');
-      const searchInput = await this.waitForSearchInput(page);
-      if (!searchInput) {
+      const searchUrl = this.buildDirectSearchUrl(modelName);
+      console.log(`  검색결과: ${searchUrl}`);
+
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForTimeout(1500 + Math.random() * 1500);
+
+      await this.waitForProducts(page);
+      await page.waitForTimeout(500 + Math.random() * 1000);
+
+      if (await this.isBlocked(page)) {
+        console.log('  [경고] 차단 감지 - Context 교체 필요');
+        const snippet = await this.getPageSnippet(page);
+        const screenshot = await this.browser.takeScreenshot(page, `blocked_${modelName}`);
         return {
           modelName,
           products: [],
-          error: '검색창을 찾지 못함',
+          error: 'BLOCKED',
+          screenshotPath: screenshot,
+          pageSnippet: snippet,
         };
       }
-
-      await searchInput.click();
-      await page.waitForTimeout(100);
-      await searchInput.fill(modelName);
-      await page.waitForTimeout(100);
-
-      console.log('  검색 실행...');
-      await searchInput.press('Enter');
-      await page.waitForTimeout(2000);
-
-      const currentUrl = page.url();
-      const filteredUrl = this.buildFilteredUrl(currentUrl);
-      console.log(`  검색결과: ${filteredUrl}`);
-
-      await page.goto(filteredUrl, { waitUntil: 'domcontentloaded' });
-      await page.waitForTimeout(1500);
-
-      await this.waitForProducts(page);
-      await page.waitForTimeout(1000);
 
       let screenshotPath: string | undefined;
       if (takeScreenshot) {
@@ -71,7 +84,7 @@ export class GmarketSearcher {
       return {
         modelName,
         products,
-        searchUrl: filteredUrl,
+        searchUrl,
         screenshotPath,
       };
 
@@ -84,16 +97,35 @@ export class GmarketSearcher {
         error,
       };
     } finally {
-      await context.close();
+      await page.close();
     }
   }
 
-  private async waitForSearchInput(page: Page): Promise<any> {
+  private async establishSession(page: Page): Promise<void> {
+    console.log('  세션 확립 중 (메인 페이지 방문)...');
+    await page.goto(GmarketSearcher.BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2000 + Math.random() * 2000);
+    this.sessionEstablished = true;
+  }
+
+  private async isBlocked(page: Page): Promise<boolean> {
     try {
-      await page.waitForSelector(GmarketSearcher.SEARCH_INPUT_SELECTORS, { timeout: 15000 });
-      return await page.$(GmarketSearcher.SEARCH_INPUT_SELECTORS);
+      const bodyText = await page.evaluate(() =>
+        document.body?.innerText?.toLowerCase().slice(0, 2000) || ''
+      );
+      return BLOCKED_SIGNALS.some(signal => bodyText.includes(signal));
     } catch {
-      return null;
+      return false;
+    }
+  }
+
+  private async getPageSnippet(page: Page): Promise<string> {
+    try {
+      return await page.evaluate(() =>
+        (document.body?.innerText || '').slice(0, 500)
+      );
+    } catch {
+      return '';
     }
   }
 

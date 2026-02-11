@@ -8,7 +8,24 @@ import path from 'path';
 // Stealth 플러그인 적용 (Cloudflare 우회)
 chromium.use(StealthPlugin());
 
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+];
+
+const VIEWPORTS = [
+  { width: 1920, height: 1080 },
+  { width: 1536, height: 864 },
+  { width: 1440, height: 900 },
+  { width: 1366, height: 768 },
+];
+
+function pickRandom<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
 // 프록시 설정 (DataImpulse Residential Proxy)
 const PROXY_HOST = process.env.PROXY_HOST || '';
@@ -32,6 +49,9 @@ export class BrowserManager {
   private headless: boolean;
   private screenshotsDir: string;
 
+  private persistentContext: BrowserContext | null = null;
+  private contextUserAgent: string = '';
+
   constructor(headless = true, screenshotsDir = 'data/screenshots') {
     this.headless = headless;
     this.screenshotsDir = screenshotsDir;
@@ -54,6 +74,7 @@ export class BrowserManager {
   }
 
   async stop(): Promise<void> {
+    await this.closeContext();
     if (this.browser) {
       await this.browser.close();
       this.browser = null;
@@ -71,18 +92,60 @@ export class BrowserManager {
     return this.browser !== null;
   }
 
+  async getOrCreateContext(): Promise<BrowserContext> {
+    if (this.persistentContext) return this.persistentContext;
+
+    if (!this.browser) throw new Error('Browser not started');
+
+    this.contextUserAgent = pickRandom(USER_AGENTS);
+    const viewport = pickRandom(VIEWPORTS);
+
+    this.persistentContext = await this.browser.newContext({
+      viewport,
+      userAgent: this.contextUserAgent,
+      locale: 'ko-KR',
+      timezoneId: 'Asia/Seoul',
+    });
+
+    console.log(`[브라우저] 새 Context 생성 (UA: ...${this.contextUserAgent.slice(-30)}, ${viewport.width}x${viewport.height})`);
+    return this.persistentContext;
+  }
+
+  async newPageInContext(): Promise<Page> {
+    const context = await this.getOrCreateContext();
+    const page = await context.newPage();
+    page.setDefaultTimeout(30000);
+    page.setDefaultNavigationTimeout(60000);
+    return page;
+  }
+
+  async closeContext(): Promise<void> {
+    if (this.persistentContext) {
+      try {
+        await this.persistentContext.close();
+      } catch { /* already closed */ }
+      this.persistentContext = null;
+    }
+  }
+
+  async rotateContext(cooldownMs = 8000): Promise<void> {
+    console.log(`[브라우저] Context 교체 (쿨다운 ${(cooldownMs / 1000).toFixed(1)}초)`);
+    await this.closeContext();
+    await new Promise(resolve => setTimeout(resolve, cooldownMs));
+    await this.getOrCreateContext();
+  }
+
   async newPage(): Promise<{ page: Page; context: BrowserContext }> {
     if (!this.browser) throw new Error('Browser not started');
 
     const context = await this.browser.newContext({
-      viewport: { width: 1920, height: 1080 },
-      userAgent: USER_AGENT,
+      viewport: pickRandom(VIEWPORTS),
+      userAgent: pickRandom(USER_AGENTS),
       locale: 'ko-KR',
       timezoneId: 'Asia/Seoul',
     });
 
     const page = await context.newPage();
-
     page.setDefaultTimeout(30000);
     page.setDefaultNavigationTimeout(60000);
 

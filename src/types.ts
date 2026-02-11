@@ -16,9 +16,10 @@ export interface Product {
 export interface SearchResult {
   modelName: string;
   products: Product[];
-  searchUrl?: string;  // 최저가 정렬된 검색 페이지 URL
+  searchUrl?: string;
   error?: string;
   screenshotPath?: string;
+  pageSnippet?: string;
 }
 
 export interface CrawlerOptions {
