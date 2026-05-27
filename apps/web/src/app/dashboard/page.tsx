@@ -368,9 +368,15 @@ export default function DashboardPage() {
   const currentJobs = jobListTab === 'active' ? jobs : archivedJobs
   const currentPriceCalcJobs = priceCalcJobListTab === 'active' ? priceCalcJobs : archivedPriceCalcJobs
 
+  const queueJobs = jobs
+    .filter((j) => ['pending', 'running'].includes(j.status))
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+
   return (
     <main className="min-h-screen p-4 md:p-8">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-6xl mx-auto">
+        <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-6">
+          <div className="min-w-0">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-2xl font-bold">G마켓 최저가 크롤러</h1>
           <div className="flex items-center gap-4">
@@ -763,6 +769,59 @@ export default function DashboardPage() {
           </Card>
           </>
         )}
+          </div>
+
+          <aside className="mt-6 lg:mt-0">
+            <div className="lg:sticky lg:top-8">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">전체 큐 ({queueJobs.length})</CardTitle>
+                  <CardDescription>워커 처리 순서</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 max-h-[600px] overflow-y-auto">
+                  {queueJobs.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">큐가 비어있습니다</p>
+                  ) : (
+                    queueJobs.map((job, idx) => {
+                      const total = job.total_models || 0
+                      const done = (job.completed_models || 0) + (job.failed_models || 0)
+                      const progress = total > 0 ? Math.round((done / total) * 100) : 0
+                      const isRunning = job.status === 'running'
+                      return (
+                        <div key={job.id} className="border rounded-lg p-3 text-sm">
+                          <div className="flex justify-between items-center mb-1">
+                            <span className="font-semibold">#{idx + 1}</span>
+                            <span
+                              className={`text-xs px-2 py-0.5 rounded ${
+                                isRunning
+                                  ? 'bg-green-100 text-green-700'
+                                  : 'bg-gray-100 text-gray-600'
+                              }`}
+                            >
+                              {isRunning ? '처리 중' : '대기'}
+                            </span>
+                          </div>
+                          <div className="text-xs text-muted-foreground mb-2 font-mono truncate">
+                            {job.id.slice(0, 8)}
+                          </div>
+                          <Progress value={progress} className="mb-1 h-1.5" />
+                          <div className="text-xs text-muted-foreground flex justify-between">
+                            <span>
+                              {done} / {total} ({progress}%)
+                            </span>
+                            {job.failed_models > 0 && (
+                              <span className="text-red-500">실패 {job.failed_models}</span>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </aside>
+        </div>
       </div>
     </main>
   )
