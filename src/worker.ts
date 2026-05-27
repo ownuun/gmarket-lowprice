@@ -9,8 +9,8 @@ const SUPABASE_URL = process.env.SUPABASE_URL!
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY!
 const POLL_INTERVAL = 3000
 const CONCURRENCY = 1
-const MIN_DELAY = 2000
-const MAX_DELAY = 5000
+const MIN_DELAY = parseInt(process.env.WORKER_MIN_DELAY ?? '2000', 10)
+const MAX_DELAY = parseInt(process.env.WORKER_MAX_DELAY ?? '5000', 10)
 
 const CONTEXT_ROTATION_EVERY = 30
 const CONTEXT_COOLDOWN_MS = 8000
@@ -382,7 +382,8 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
-  const browser = new BrowserManager(true)
+  const headless = process.env.WORKER_HEADLESS !== 'false'
+  const browser = new BrowserManager(headless)
   await browser.start()
   let searcher = new GmarketSearcher(browser)
   const tracker = new IncidentTracker(buildIncidentSettings())

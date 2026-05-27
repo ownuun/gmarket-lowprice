@@ -6,10 +6,16 @@ import type { SearchResult } from './types.js';
 const BLOCKED_SIGNALS = [
   'captcha',
   'robot',
-  '자동화',
   'blocked',
   'access denied',
   'unusual traffic',
+  'cloudflare',
+  '봇 확인',
+  '사람인지 확인',
+  '원활한 서비스 이용',
+  '간단한 확인',
+  '자동화',
+  '자동으로 작동하는 프로그램',
 ];
 
 export class GmarketSearcher {
