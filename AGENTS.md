@@ -87,9 +87,9 @@ pnpm build:web        # 웹앱 (next build)
 # 실행
 pnpm worker           # 로컬 워커 실행
 
-# VPS 배포
-ssh -i ~/.ssh/oracle.key ubuntu@158.179.163.193
-git pull && pnpm build:worker
+# VPS 배포 (현재: iwinv)
+ssh -i ~/.ssh/iwinv_ed25519 root@115.68.231.137
+cd ~/gmarket-lowprice && git pull && pnpm build:worker
 sudo systemctl restart gmarket-worker
 
 # 로그 확인
@@ -100,8 +100,17 @@ sudo journalctl -u gmarket-worker -f
 
 ### 배포 구조
 - **웹앱**: Vercel (자동 배포)
-- **크롤러**: Oracle Cloud VPS, systemd 서비스 (`gmarket-worker`)
+- **크롤러**: iwinv VPS (`gmarket-worker` systemd 서비스)
+  - 호스트: `115.68.231.137` (KR1-Z02, vgna_2_n, Ubuntu 24.04, 2 vCPU / 2GB / 50GB NVMe)
+  - 접속: `root` + `~/.ssh/iwinv_ed25519`
+  - 비용: 월 13,100원 (부가세 별도)
 - **DB**: Supabase (ap-northeast-2)
+
+### 마이그레이션 히스토리
+- **2026-05-27**: Oracle Cloud VPS (`158.179.163.193`) → iwinv (`115.68.231.137`)
+  - 이유: Oracle Cloud 콘솔 로그인 차단 + SSH 키 분실로 접근 불가
+  - 옛 서버는 deprecated. 살아있는지 여부 확인 불가능
+  - Supabase 옛 service_role 키도 무효화 예정 (legacy → 신 secret key 체계로 전환)
 
 ### 알려진 이슈
 1. `src/` vs `apps/crawler/src/` 코드 중복 → root `src/`가 실제 배포 코드
