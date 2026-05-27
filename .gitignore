@@ -33,3 +33,4 @@ debug.ts
 
 # pnpm
 .pnpm-debug.log
+cookies.json

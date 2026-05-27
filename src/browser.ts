@@ -2,8 +2,22 @@ import 'dotenv/config';
 import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import type { Browser, BrowserContext, Page } from 'playwright';
-import { mkdir } from 'fs/promises';
+import { mkdir, readFile } from 'fs/promises';
 import path from 'path';
+
+type CookieData = Parameters<BrowserContext['addCookies']>[0][number];
+
+async function loadCookiesFromFile(): Promise<CookieData[]> {
+  const file = process.env.WORKER_COOKIES_FILE;
+  if (!file) return [];
+  try {
+    const raw = await readFile(file, 'utf-8');
+    return JSON.parse(raw) as CookieData[];
+  } catch (e) {
+    console.log(`[쿠키] 로드 실패 (무시): ${(e as Error).message}`);
+    return [];
+  }
+}
 
 // Stealth 플러그인 적용 (Cloudflare 우회)
 chromium.use(StealthPlugin());
@@ -106,6 +120,12 @@ export class BrowserManager {
       locale: 'ko-KR',
       timezoneId: 'Asia/Seoul',
     });
+
+    const cookies = await loadCookiesFromFile();
+    if (cookies.length > 0) {
+      await this.persistentContext.addCookies(cookies);
+      console.log(`[쿠키] ${cookies.length}개 inject`);
+    }
 
     console.log(`[브라우저] 새 Context 생성 (UA: ...${this.contextUserAgent.slice(-30)}, ${viewport.width}x${viewport.height})`);
     return this.persistentContext;
