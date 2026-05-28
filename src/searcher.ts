@@ -62,6 +62,19 @@ export class GmarketSearcher {
       await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
       await page.waitForTimeout(1500 + Math.random() * 1500);
 
+      if (await this.isBlocked(page)) {
+        console.log('  [경고] 차단 감지 - 상품 대기 건너뜀');
+        const snippet = await this.getPageSnippet(page);
+        const screenshot = await this.browser.takeScreenshot(page, `blocked_${modelName}`);
+        return {
+          modelName,
+          products: [],
+          error: 'BLOCKED',
+          screenshotPath: screenshot,
+          pageSnippet: snippet,
+        };
+      }
+
       await this.waitForProducts(page);
       await page.waitForTimeout(500 + Math.random() * 1000);
 

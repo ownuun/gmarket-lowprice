@@ -17,7 +17,7 @@ const CONTEXT_COOLDOWN_MS = 8000
 const BROWSER_RESTART_INTERVAL = 24 * 60 * 60 * 1000
 const BROWSER_RESTART_AFTER_JOBS = 300
 const MAX_RETRY_ON_BROWSER_ERROR = 2
-const MAX_RETRY_ON_BLOCKED = 2
+const MAX_RETRY_ON_BLOCKED = 1
 
 let lastBrowserRestart = Date.now()
 let jobsSinceRestart = 0
@@ -211,18 +211,20 @@ async function processJobItem(
 
     while (result.error === 'BLOCKED' && retryCount < MAX_RETRY_ON_BLOCKED) {
       retryCount++
-      console.log(`[차단 재시도] ${item.model_name} - Context 교체 후 재시도 (${retryCount}/${MAX_RETRY_ON_BLOCKED})`)
+      console.log(`[차단 재시도] ${item.model_name} - 브라우저 재시작 후 재시도 (${retryCount}/${MAX_RETRY_ON_BLOCKED})`)
       await addWorkerLog({
         jobId: item.job_id,
         jobItemId: item.id,
         modelName: item.model_name,
         level: 'warn',
-        message: `[차단 재시도] Context 교체 후 재시도 (${retryCount}/${MAX_RETRY_ON_BLOCKED})`,
+        message: `[차단 재시도] 브라우저 재시작 후 재시도 (${retryCount}/${MAX_RETRY_ON_BLOCKED})`,
       })
-      const cooldown = CONTEXT_COOLDOWN_MS + Math.random() * 6000
-      await browser.rotateContext(cooldown)
+      await delay(1000 + Math.random() * 1000)
+      await browser.restart()
+      lastBrowserRestart = Date.now()
+      jobsSinceRestart = 0
       searchesSinceContextRotation = 0
-      tracker.recordContextRotation()
+      tracker.recordBrowserRestart()
       searcher = new GmarketSearcher(browser)
       await addWorkerLog({
         jobId: item.job_id,
