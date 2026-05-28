@@ -2,7 +2,7 @@ import type { Page } from 'playwright';
 import type { Product } from './types.js';
 
 export class GmarketParser {
-  private maxItems = 5; // 상위 5개 상품 파싱
+  private maxItems = 10; // 상위 10개 상품 파싱
 
   async parseSearchResults(page: Page, modelName: string): Promise<Product[]> {
     const selectors = ['div.box__item-container', '.box__component-itemcard'];
