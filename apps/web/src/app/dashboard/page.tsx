@@ -34,8 +34,33 @@ interface PriceCalcJob {
   created_at: string
 }
 
+interface WorkerLog {
+  id: string
+  job_id: string | null
+  model_name: string | null
+  level: 'info' | 'warn' | 'error' | 'success'
+  message: string
+  created_at: string
+}
+
 type MainTab = 'crawling' | 'price-calc'
 type JobListTab = 'active' | 'archived'
+
+const LOG_LEVEL_STYLES: Record<
+  WorkerLog['level'],
+  { pill: string; border: string; label: string }
+> = {
+  info: { pill: 'bg-blue-100 text-blue-700', border: 'border-blue-300', label: '정보' },
+  success: { pill: 'bg-green-100 text-green-700', border: 'border-green-300', label: '완료' },
+  warn: { pill: 'bg-amber-100 text-amber-700', border: 'border-amber-300', label: '주의' },
+  error: { pill: 'bg-red-100 text-red-700', border: 'border-red-300', label: '오류' },
+}
+
+const formatLogTime = (iso: string) => {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleTimeString('ko-KR', { hour12: false })
+}
 
 export default function DashboardPage() {
   const [mainTab, setMainTab] = useState<MainTab>('crawling')
@@ -61,6 +86,8 @@ export default function DashboardPage() {
   const [priceCalcJobListTab, setPriceCalcJobListTab] = useState<JobListTab>('active')
   const [priceCalcActionLoading, setPriceCalcActionLoading] = useState<{ [key: string]: 'archive' | 'delete' | null }>({})
 
+  const [workerLogs, setWorkerLogs] = useState<WorkerLog[]>([])
+
   const playautoInputRef = useRef<HTMLInputElement>(null)
   const templateInputRef = useRef<HTMLInputElement>(null)
   const gmarketInputRef = useRef<HTMLInputElement>(null)
@@ -79,9 +106,11 @@ export default function DashboardPage() {
     fetchArchivedJobs()
     fetchPriceCalcJobs()
     fetchArchivedPriceCalcJobs()
+    fetchWorkerLogs()
 
     const interval = setInterval(() => {
       fetchJobs()
+      fetchWorkerLogs()
       if (jobListTab === 'archived') {
         fetchArchivedJobs()
       }
@@ -138,6 +167,18 @@ export default function DashboardPage() {
     if (res.ok) {
       const data = await res.json()
       setArchivedPriceCalcJobs(Array.isArray(data) ? data : [])
+    }
+  }
+
+  const fetchWorkerLogs = async () => {
+    try {
+      const res = await fetch('/api/worker-logs')
+      if (!res.ok) return
+      const data = await res.json()
+      const logs = Array.isArray(data?.logs) ? (data.logs as WorkerLog[]) : []
+      setWorkerLogs(logs)
+    } catch {
+      setWorkerLogs((prev) => prev)
     }
   }
 
@@ -772,7 +813,7 @@ export default function DashboardPage() {
           </div>
 
           <aside className="mt-6 lg:mt-0">
-            <div className="lg:sticky lg:top-8">
+            <div className="lg:sticky lg:top-8 space-y-4">
               <Card>
                 <CardHeader>
                   <CardTitle className="text-lg">전체 큐 ({queueJobs.length})</CardTitle>
@@ -813,6 +854,47 @@ export default function DashboardPage() {
                               <span className="text-red-500">실패 {job.failed_models}</span>
                             )}
                           </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">워커 로그 ({workerLogs.length})</CardTitle>
+                  <CardDescription>최근 활동</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2 max-h-[320px] overflow-y-auto">
+                  {workerLogs.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">로그가 없습니다</p>
+                  ) : (
+                    workerLogs.map((log) => {
+                      const style = LOG_LEVEL_STYLES[log.level] ?? LOG_LEVEL_STYLES.info
+                      return (
+                        <div
+                          key={log.id}
+                          className={`border-l-2 ${style.border} pl-2.5 py-1`}
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-0.5">
+                            <span
+                              className={`text-xs px-2 py-0.5 rounded font-medium ${style.pill}`}
+                            >
+                              {style.label}
+                            </span>
+                            <span className="text-xs text-muted-foreground font-mono shrink-0">
+                              {formatLogTime(log.created_at)}
+                            </span>
+                          </div>
+                          {log.model_name && (
+                            <div className="text-xs text-muted-foreground font-mono truncate">
+                              {log.model_name}
+                            </div>
+                          )}
+                          <p className="text-xs leading-snug break-words line-clamp-2">
+                            {log.message}
+                          </p>
                         </div>
                       )
                     })
