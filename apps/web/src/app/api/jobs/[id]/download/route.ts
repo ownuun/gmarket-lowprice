@@ -44,6 +44,7 @@ export async function GET(
     { header: '모델명', key: 'model_name', width: 15 },
     { header: '상품명', key: 'product_name', width: 50 },
     { header: '판매자', key: 'seller', width: 15 },
+    { header: '카테고리', key: 'category', width: 35 },
     { header: '정가', key: 'original_price', width: 12 },
     { header: '할인가', key: 'discount_price', width: 12 },
     { header: '할인율', key: 'discount_percent', width: 8 },
@@ -84,6 +85,30 @@ export async function GET(
     return isoString.slice(0, 19).replace('T', ' ')
   }
 
+  const formatCategoryPart = (name?: string | null, code?: string | null): string | null => {
+    if (name && code) return `${name} (${code})`
+    if (name) return name
+    if (code) return code
+    return null
+  }
+
+  const formatCategory = (product: {
+    largeCategoryCode?: string | null
+    mediumCategoryCode?: string | null
+    smallCategoryCode?: string | null
+    largeCategoryName?: string | null
+    mediumCategoryName?: string | null
+    smallCategoryName?: string | null
+  }): string => {
+    const parts = [
+      formatCategoryPart(product.largeCategoryName, product.largeCategoryCode),
+      formatCategoryPart(product.mediumCategoryName, product.mediumCategoryCode),
+      formatCategoryPart(product.smallCategoryName, product.smallCategoryCode),
+    ].filter((part): part is string => Boolean(part))
+
+    return parts.length > 0 ? parts.join(' > ') : '-'
+  }
+
   // Sort job_items by sequence
   const sortedItems = [...(job.job_items || [])].sort(
     (a: { sequence: number }, b: { sequence: number }) => a.sequence - b.sequence
@@ -105,6 +130,12 @@ export async function GET(
         shippingFee: number
         totalPrice: number
         seller: string
+        largeCategoryCode?: string | null
+        mediumCategoryCode?: string | null
+        smallCategoryCode?: string | null
+        largeCategoryName?: string | null
+        mediumCategoryName?: string | null
+        smallCategoryName?: string | null
         url: string
         searchUrl: string
         crawledAt: string
@@ -121,6 +152,7 @@ export async function GET(
           model_name: item.model_name,
           product_name: product.name,
           seller: product.seller,
+          category: formatCategory(product),
           original_price: formatPrice(product.originalPrice),
           discount_price: formatPrice(product.discountPrice),
           discount_percent: formatPercent(product.discountPercent),
@@ -149,6 +181,7 @@ export async function GET(
         model_name: item.model_name,
         product_name: item.status === 'failed' ? item.error_message || '실패' : '결과 없음',
         seller: '-',
+        category: '-',
         original_price: '-',
         discount_price: '-',
         discount_percent: '-',

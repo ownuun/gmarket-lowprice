@@ -1,11 +1,21 @@
 import type { Page } from 'playwright';
 import type { Product } from './types.js';
 
+interface CategoryInfo {
+  largeCategoryCode?: string | null;
+  mediumCategoryCode?: string | null;
+  smallCategoryCode?: string | null;
+  largeCategoryName?: string | null;
+  mediumCategoryName?: string | null;
+  smallCategoryName?: string | null;
+}
+
 export class GmarketParser {
   private maxItems = 10; // 상위 10개 상품 파싱
 
   async parseSearchResults(page: Page, modelName: string): Promise<Product[]> {
     const selectors = ['div.box__item-container', '.box__component-itemcard'];
+    const categoryData = await this.extractCategoryData(page);
 
     let items: any[] = [];
     for (const sel of selectors) {
@@ -23,7 +33,7 @@ export class GmarketParser {
 
     for (let i = 0; i < itemsToProcess.length; i++) {
       try {
-        const product = await this.parseItem(itemsToProcess[i], modelName, i + 1);
+        const product = await this.parseItem(itemsToProcess[i], modelName, i + 1, categoryData);
         if (product) {
           products.push(product);
         }
@@ -35,7 +45,12 @@ export class GmarketParser {
     return products;
   }
 
-  private async parseItem(item: any, modelName: string, rank: number): Promise<Product | null> {
+  private async parseItem(
+    item: any,
+    modelName: string,
+    rank: number,
+    categoryData: Map<string, CategoryInfo>,
+  ): Promise<Product | null> {
     // 상품명
     const productName = await this.extractText(item, [
       'span.text__item',
@@ -113,6 +128,8 @@ export class GmarketParser {
     if (productUrl && !productUrl.startsWith('http')) {
       productUrl = `https://www.gmarket.co.kr${productUrl}`;
     }
+    const goodscode = await this.extractGoodscode(item, productUrl);
+    const categoryInfo = goodscode ? categoryData.get(goodscode) : undefined;
 
     // 할인율 (쿠폰적용가가 있을 때만 계산)
     let discountPercent: number | null = null;
@@ -129,9 +146,86 @@ export class GmarketParser {
       shippingFee,
       discountPercent,
       productUrl: productUrl || '',
+      largeCategoryCode: categoryInfo?.largeCategoryCode ?? null,
+      mediumCategoryCode: categoryInfo?.mediumCategoryCode ?? null,
+      smallCategoryCode: categoryInfo?.smallCategoryCode ?? null,
+      largeCategoryName: categoryInfo?.largeCategoryName ?? null,
+      mediumCategoryName: categoryInfo?.mediumCategoryName ?? null,
+      smallCategoryName: categoryInfo?.smallCategoryName ?? null,
       rank,
       crawledAt: new Date(),
     };
+  }
+
+  private async extractCategoryData(page: Page): Promise<Map<string, CategoryInfo>> {
+    try {
+      const { items, codeNames } = await page.evaluate(() => {
+        const decodeHtml = (value: string): string => {
+          const textarea = document.createElement('textarea');
+          textarea.innerHTML = value;
+          return textarea.value;
+        };
+
+        const html = document.documentElement.outerHTML;
+        const codeNames: Record<string, string> = {};
+        document.querySelectorAll('a[href*="c="] , a[href*="f=c:"]').forEach((link) => {
+          const href = link.getAttribute('href') || '';
+          const text = (link.textContent || '').trim();
+          if (!text) return;
+          const matches = [...href.matchAll(/(?:[?&]c=|f=c%3A|f=c:)(\d{9})/g)];
+          matches.forEach((match) => {
+            codeNames[match[1]] = text;
+          });
+        });
+
+        const marker = 'top_listed_general_items_info';
+        const markerIndex = html.indexOf(marker);
+        if (markerIndex < 0) return { items: [], codeNames };
+
+        const afterMarker = html.slice(markerIndex);
+        const contentMatch = afterMarker.match(/content="([^"]*)"/);
+        if (!contentMatch) return { items: [], codeNames };
+
+        const content = decodeHtml(contentMatch[1]);
+        const fieldMatch = content.match(/"top_listed_general_items_info"\s*:\s*"((?:\\.|[^"])*)"/);
+        if (!fieldMatch) return { items: [], codeNames };
+
+        const jsonText = fieldMatch[1].replace(/\\"/g, '"');
+        return { items: JSON.parse(jsonText), codeNames };
+      });
+
+      const map = new Map<string, CategoryInfo>();
+      for (const item of items as Array<{
+        itemNo?: string;
+        largeCategoryCode?: string;
+        mediumCategoryCode?: string;
+        smallCategoryCode?: string;
+      }>) {
+        if (!item.itemNo) continue;
+        map.set(item.itemNo, {
+          largeCategoryCode: item.largeCategoryCode ?? null,
+          mediumCategoryCode: item.mediumCategoryCode ?? null,
+          smallCategoryCode: item.smallCategoryCode ?? null,
+          largeCategoryName: item.largeCategoryCode ? codeNames[item.largeCategoryCode] ?? null : null,
+          mediumCategoryName: item.mediumCategoryCode ? codeNames[item.mediumCategoryCode] ?? null : null,
+          smallCategoryName: item.smallCategoryCode ? codeNames[item.smallCategoryCode] ?? null : null,
+        });
+      }
+      return map;
+    } catch {
+      return new Map();
+    }
+  }
+
+  private async extractGoodscode(element: any, productUrl: string | null): Promise<string | null> {
+    try {
+      const link = await element.$('a[data-montelena-goodscode]');
+      const goodscode = await link?.getAttribute('data-montelena-goodscode');
+      if (goodscode) return goodscode;
+    } catch { /* ignore */ }
+
+    const match = productUrl?.match(/[?&]goodscode=(\d+)/i);
+    return match?.[1] ?? null;
   }
 
   private async extractText(element: any, selectors: string[]): Promise<string | null> {

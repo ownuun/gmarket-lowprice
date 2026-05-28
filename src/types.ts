@@ -8,6 +8,12 @@ export interface Product {
   discountPercent: number | null;
   productUrl: string;
   searchUrl?: string;      // 검색 결과 페이지 URL
+  largeCategoryCode?: string | null;
+  mediumCategoryCode?: string | null;
+  smallCategoryCode?: string | null;
+  largeCategoryName?: string | null;
+  mediumCategoryName?: string | null;
+  smallCategoryName?: string | null;
   rank: number;
   crawledAt: Date;
   clusterSize?: number;    // 가격 클러스터 크기 (신뢰도 지표)

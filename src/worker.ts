@@ -133,6 +133,12 @@ function transformProduct(product: Product, searchUrl?: string) {
     seller: product.sellerName,
     url: product.productUrl,
     searchUrl: searchUrl || product.searchUrl,
+    largeCategoryCode: product.largeCategoryCode,
+    mediumCategoryCode: product.mediumCategoryCode,
+    smallCategoryCode: product.smallCategoryCode,
+    largeCategoryName: product.largeCategoryName,
+    mediumCategoryName: product.mediumCategoryName,
+    smallCategoryName: product.smallCategoryName,
     crawledAt: new Date().toISOString(),
   }
 }
