@@ -160,13 +160,6 @@ export class GmarketParser {
   private async extractCategoryData(page: Page): Promise<Map<string, CategoryInfo>> {
     try {
       const { items, codeNames } = await page.evaluate(() => {
-        const decodeHtml = (value: string): string => {
-          const textarea = document.createElement('textarea');
-          textarea.innerHTML = value;
-          return textarea.value;
-        };
-
-        const html = document.documentElement.outerHTML;
         const codeNames: Record<string, string> = {};
         document.querySelectorAll('a[href*="c="] , a[href*="f=c:"]').forEach((link) => {
           const href = link.getAttribute('href') || '';
@@ -178,20 +171,17 @@ export class GmarketParser {
           });
         });
 
-        const marker = 'top_listed_general_items_info';
-        const markerIndex = html.indexOf(marker);
-        if (markerIndex < 0) return { items: [], codeNames };
+        const metaContent = document.querySelector('meta[name="uts-pvalue"]')?.getAttribute('content');
+        if (!metaContent) return { items: [], codeNames };
 
-        const afterMarker = html.slice(markerIndex);
-        const contentMatch = afterMarker.match(/content="([^"]*)"/);
-        if (!contentMatch) return { items: [], codeNames };
+        const pageValue = JSON.parse(metaContent);
+        const rawItems = pageValue.top_listed_general_items_info;
+        if (!rawItems) return { items: [], codeNames };
 
-        const content = decodeHtml(contentMatch[1]);
-        const fieldMatch = content.match(/"top_listed_general_items_info"\s*:\s*"((?:\\.|[^"])*)"/);
-        if (!fieldMatch) return { items: [], codeNames };
-
-        const jsonText = fieldMatch[1].replace(/\\"/g, '"');
-        return { items: JSON.parse(jsonText), codeNames };
+        return {
+          items: typeof rawItems === 'string' ? JSON.parse(rawItems) : rawItems,
+          codeNames,
+        };
       });
 
       const map = new Map<string, CategoryInfo>();

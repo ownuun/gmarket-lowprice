@@ -2,6 +2,13 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import ExcelJS from 'exceljs'
 
+const GMARKET_CATEGORY_NAMES: Record<string, string> = {
+  '100000076': '공구/안전/산업용품',
+  '200000588': '수공구',
+  '300005952': '렌치/복스/몽키',
+  '300027199': '임팩소켓',
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -44,7 +51,7 @@ export async function GET(
     { header: '모델명', key: 'model_name', width: 15 },
     { header: '상품명', key: 'product_name', width: 50 },
     { header: '판매자', key: 'seller', width: 15 },
-    { header: '카테고리', key: 'category', width: 35 },
+    { header: '카테고리', key: 'category', width: 55 },
     { header: '정가', key: 'original_price', width: 12 },
     { header: '할인가', key: 'discount_price', width: 12 },
     { header: '할인율', key: 'discount_percent', width: 8 },
@@ -86,7 +93,8 @@ export async function GET(
   }
 
   const formatCategoryPart = (name?: string | null, code?: string | null): string | null => {
-    if (name && code) return `${name} (${code})`
+    const mappedName = code ? GMARKET_CATEGORY_NAMES[code] : null
+    if (mappedName) return mappedName
     if (name) return name
     if (code) return code
     return null
@@ -109,12 +117,16 @@ export async function GET(
     return parts.length > 0 ? parts.join(' > ') : '-'
   }
 
+  const categoryColumn = worksheet.getColumn('category')
+  categoryColumn.alignment = { wrapText: true, vertical: 'top' }
+
   // Sort job_items by sequence
   const sortedItems = [...(job.job_items || [])].sort(
     (a: { sequence: number }, b: { sequence: number }) => a.sequence - b.sequence
   )
 
   // Add data rows
+  let maxCategoryLength = '카테고리'.length
   for (let i = 0; i < sortedItems.length; i++) {
     const item = sortedItems[i]
     const nextItem = sortedItems[i + 1]
@@ -146,13 +158,15 @@ export async function GET(
       for (let j = 0; j < result.products.length; j++) {
         const product = result.products[j]
         const isLastProduct = j === result.products.length - 1
+        const category = formatCategory(product)
+        maxCategoryLength = Math.max(maxCategoryLength, category.length)
 
         worksheet.addRow({
           rank: product.rank ?? '-',
           model_name: item.model_name,
           product_name: product.name,
           seller: product.seller,
-          category: formatCategory(product),
+          category,
           original_price: formatPrice(product.originalPrice),
           discount_price: formatPrice(product.discountPrice),
           discount_percent: formatPercent(product.discountPercent),
@@ -204,6 +218,8 @@ export async function GET(
       }
     }
   }
+
+  categoryColumn.width = Math.min(Math.max(maxCategoryLength + 4, 24), 80)
 
   // Generate buffer
   const buffer = await workbook.xlsx.writeBuffer()
