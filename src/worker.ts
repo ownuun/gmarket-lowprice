@@ -72,6 +72,28 @@ interface Job {
   failed_models: number
 }
 
+type WorkerLogLevel = 'info' | 'success' | 'warn' | 'error'
+
+async function addWorkerLog(params: {
+  jobId: string
+  jobItemId?: string
+  modelName?: string
+  level: WorkerLogLevel
+  message: string
+}): Promise<void> {
+  const { error } = await supabase.from('worker_logs').insert({
+    job_id: params.jobId,
+    job_item_id: params.jobItemId,
+    model_name: params.modelName,
+    level: params.level,
+    message: params.message,
+  })
+
+  if (error) {
+    console.error(`[로그 저장 실패] ${error.message}`)
+  }
+}
+
 async function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -155,6 +177,13 @@ async function processJobItem(
   tracker: IncidentTracker,
 ): Promise<ProcessResult> {
   console.log(`[처리] ${item.model_name} (${item.sequence})`)
+  await addWorkerLog({
+    jobId: item.job_id,
+    jobItemId: item.id,
+    modelName: item.model_name,
+    level: 'info',
+    message: `[처리] ${item.model_name} (${item.sequence})`,
+  })
 
   try {
     await supabase
@@ -162,17 +191,38 @@ async function processJobItem(
       .update({ status: 'processing' })
       .eq('id', item.id)
 
+    await addWorkerLog({
+      jobId: item.job_id,
+      jobItemId: item.id,
+      modelName: item.model_name,
+      level: 'info',
+      message: `[검색] ${item.model_name}`,
+    })
     let result = await searcher.search(item.model_name, false)
     let retryCount = 0
 
     while (result.error === 'BLOCKED' && retryCount < MAX_RETRY_ON_BLOCKED) {
       retryCount++
       console.log(`[차단 재시도] ${item.model_name} - Context 교체 후 재시도 (${retryCount}/${MAX_RETRY_ON_BLOCKED})`)
+      await addWorkerLog({
+        jobId: item.job_id,
+        jobItemId: item.id,
+        modelName: item.model_name,
+        level: 'warn',
+        message: `[차단 재시도] Context 교체 후 재시도 (${retryCount}/${MAX_RETRY_ON_BLOCKED})`,
+      })
       const cooldown = CONTEXT_COOLDOWN_MS + Math.random() * 6000
       await browser.rotateContext(cooldown)
       searchesSinceContextRotation = 0
       tracker.recordContextRotation()
       searcher = new GmarketSearcher(browser)
+      await addWorkerLog({
+        jobId: item.job_id,
+        jobItemId: item.id,
+        modelName: item.model_name,
+        level: 'info',
+        message: `[검색] ${item.model_name} (재시도 ${retryCount})`,
+      })
       result = await searcher.search(item.model_name, false)
     }
 
@@ -180,12 +230,26 @@ async function processJobItem(
     while (result.error && result.error !== 'BLOCKED' && isBrowserError(result.error) && retryCount < MAX_RETRY_ON_BROWSER_ERROR) {
       retryCount++
       console.log(`[재시도] ${item.model_name} - 브라우저 재시작 후 재시도 (${retryCount}/${MAX_RETRY_ON_BROWSER_ERROR})`)
+      await addWorkerLog({
+        jobId: item.job_id,
+        jobItemId: item.id,
+        modelName: item.model_name,
+        level: 'warn',
+        message: `[재시도] 브라우저 재시작 후 재시도 (${retryCount}/${MAX_RETRY_ON_BROWSER_ERROR})`,
+      })
       await browser.restart()
       lastBrowserRestart = Date.now()
       jobsSinceRestart = 0
       searchesSinceContextRotation = 0
       tracker.recordBrowserRestart()
       searcher = new GmarketSearcher(browser)
+      await addWorkerLog({
+        jobId: item.job_id,
+        jobItemId: item.id,
+        modelName: item.model_name,
+        level: 'info',
+        message: `[검색] ${item.model_name} (브라우저 재시작 후)`,
+      })
       result = await searcher.search(item.model_name, false)
     }
 
@@ -209,6 +273,13 @@ async function processJobItem(
         .eq('id', item.id)
 
       await supabase.rpc('increment_job_failed', { job_id: item.job_id })
+      await addWorkerLog({
+        jobId: item.job_id,
+        jobItemId: item.id,
+        modelName: item.model_name,
+        level: result.error === 'BLOCKED' ? 'warn' : 'error',
+        message: `[실패] ${result.error}`,
+      })
 
       if (verdict === 'BLOCKED_CONFIRMED') {
         return { searcher, blocked: true }
@@ -230,6 +301,13 @@ async function processJobItem(
         .eq('id', item.id)
 
       await supabase.rpc('increment_job_completed', { job_id: item.job_id })
+      await addWorkerLog({
+        jobId: item.job_id,
+        jobItemId: item.id,
+        modelName: item.model_name,
+        level: 'success',
+        message: `[완료] 파싱 결과: ${transformedProducts.length}개`,
+      })
     }
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e)
@@ -247,6 +325,13 @@ async function processJobItem(
       .eq('id', item.id)
 
     await supabase.rpc('increment_job_failed', { job_id: item.job_id })
+    await addWorkerLog({
+      jobId: item.job_id,
+      jobItemId: item.id,
+      modelName: item.model_name,
+      level: 'error',
+      message: `[에러] ${error}`,
+    })
   }
 
   return { searcher, blocked: false }
@@ -276,6 +361,11 @@ async function processJob(
   tracker: IncidentTracker,
 ): Promise<JobResult> {
   console.log(`\n[작업 시작] Job ${job.id}`)
+  await addWorkerLog({
+    jobId: job.id,
+    level: 'info',
+    message: `[작업 시작] Job ${job.id}`,
+  })
 
   await supabase
     .from('jobs')
@@ -291,6 +381,11 @@ async function processJob(
 
   if (error || !items) {
     console.error(`[에러] Job items 조회 실패: ${error?.message}`)
+    await addWorkerLog({
+      jobId: job.id,
+      level: 'error',
+      message: `[에러] Job items 조회 실패: ${error?.message}`,
+    })
     return { searcher, blocked: false }
   }
 
@@ -299,6 +394,11 @@ async function processJob(
 
   for (const batch of itemChunks) {
     console.log(`[배치] ${batch.map(i => i.model_name).join(', ')} 처리`)
+    await addWorkerLog({
+      jobId: job.id,
+      level: 'info',
+      message: `[배치] ${batch.map(i => i.model_name).join(', ')} 처리`,
+    })
 
     for (const item of batch) {
       currentSearcher = await rotateContextIfNeeded(browser, currentSearcher, tracker)
@@ -307,6 +407,11 @@ async function processJob(
 
       if (result.blocked) {
         console.log(`[인시던트] Job ${job.id} 일시 중지 (봇 탐지)`)
+        await addWorkerLog({
+          jobId: job.id,
+          level: 'error',
+          message: '[인시던트] 봇 탐지로 작업 일시 중지',
+        })
         await supabase
           .from('jobs')
           .update({ status: 'paused', error_message: 'Bot detection confirmed' })
@@ -318,6 +423,11 @@ async function processJob(
     if (batch !== itemChunks[itemChunks.length - 1]) {
       const delayMs = randomDelay()
       console.log(`[대기] ${(delayMs / 1000).toFixed(1)}초`)
+      await addWorkerLog({
+        jobId: job.id,
+        level: 'info',
+        message: `[대기] ${(delayMs / 1000).toFixed(1)}초`,
+      })
       await delay(delayMs)
     }
   }
@@ -342,6 +452,11 @@ async function processJob(
         .eq('id', job.id)
 
       console.log(`[완료] Job ${job.id}`)
+      await addWorkerLog({
+        jobId: job.id,
+        level: 'success',
+        message: `[완료] Job ${job.id}`,
+      })
     }
   }
 
