@@ -22,6 +22,7 @@ const MAX_RETRY_ON_BLOCKED = 2
 let lastBrowserRestart = Date.now()
 let jobsSinceRestart = 0
 let searchesSinceContextRotation = 0
+let workerLogsAvailable = true
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
@@ -81,6 +82,8 @@ async function addWorkerLog(params: {
   level: WorkerLogLevel
   message: string
 }): Promise<void> {
+  if (!workerLogsAvailable) return
+
   const { error } = await supabase.from('worker_logs').insert({
     job_id: params.jobId,
     job_item_id: params.jobItemId,
@@ -90,6 +93,11 @@ async function addWorkerLog(params: {
   })
 
   if (error) {
+    if (error.code === 'PGRST205' || error.message.includes('worker_logs')) {
+      workerLogsAvailable = false
+      console.error('[로그 저장 비활성화] worker_logs 테이블을 찾지 못함 - migration 적용 후 worker 재시작 필요')
+      return
+    }
     console.error(`[로그 저장 실패] ${error.message}`)
   }
 }
