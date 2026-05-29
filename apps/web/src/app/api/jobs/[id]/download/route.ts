@@ -4,8 +4,13 @@ import ExcelJS from 'exceljs'
 
 const GMARKET_CATEGORY_NAMES: Record<string, string> = {
   '100000076': '공구/안전/산업용품',
+  '300021319': '기타 철물용품',
+  '300025517': '기타 전동공구',
   '300005952': '렌치/복스/몽키',
   '300027199': '기타수공구',
+  '300027200': '에어랜치',
+  '300027201': '기타에어/유압공구',
+  '300028828': '전동공구 세트',
 }
 
 export async function GET(
