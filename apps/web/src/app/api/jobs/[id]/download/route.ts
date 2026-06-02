@@ -52,6 +52,7 @@ export async function GET(
   // Define columns (CLI 형식과 동일)
   worksheet.columns = [
     { header: '순위', key: 'rank', width: 6 },
+    { header: '상품번호', key: 'product_no', width: 14 },
     { header: '모델명', key: 'model_name', width: 15 },
     { header: '상품명', key: 'product_name', width: 50 },
     { header: '판매자', key: 'seller', width: 15 },
@@ -140,6 +141,7 @@ export async function GET(
       products?: Array<{
         rank: number
         name: string
+        productNo?: string | null
         originalPrice: number
         discountPrice: number
         discountPercent: number
@@ -169,6 +171,7 @@ export async function GET(
           rank: product.rank ?? '-',
           model_name: item.model_name,
           product_name: product.name,
+          product_no: product.productNo || '-',
           seller: product.seller,
           category,
           original_price: formatPrice(product.originalPrice),
@@ -198,6 +201,7 @@ export async function GET(
         rank: '-',
         model_name: item.model_name,
         product_name: item.status === 'failed' ? item.error_message || '실패' : '결과 없음',
+        product_no: '-',
         seller: '-',
         category: '-',
         original_price: '-',
