@@ -145,6 +145,7 @@ export class GmarketParser {
       regularPrice,
       shippingFee,
       discountPercent,
+      productNo: goodscode,
       productUrl: productUrl || '',
       largeCategoryCode: categoryInfo?.largeCategoryCode ?? null,
       mediumCategoryCode: categoryInfo?.mediumCategoryCode ?? null,

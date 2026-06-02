@@ -131,6 +131,7 @@ function transformProduct(product: Product, searchUrl?: string) {
       (product.couponPrice ?? product.regularPrice ?? 0) +
       (product.shippingFee ?? 0),
     seller: product.sellerName,
+    productNo: product.productNo,
     url: product.productUrl,
     searchUrl: searchUrl || product.searchUrl,
     largeCategoryCode: product.largeCategoryCode,

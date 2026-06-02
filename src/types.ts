@@ -6,6 +6,7 @@ export interface Product {
   regularPrice: number | null;  // 정가
   shippingFee: number | null;   // 배송비 (null = 무료)
   discountPercent: number | null;
+  productNo?: string | null;   // G마켓 상품번호 (goodscode)
   productUrl: string;
   searchUrl?: string;      // 검색 결과 페이지 URL
   largeCategoryCode?: string | null;
