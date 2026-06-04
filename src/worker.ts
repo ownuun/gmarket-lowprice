@@ -307,12 +307,18 @@ async function processJobItem(
       const transformedProducts = result.products.map((p) =>
         transformProduct(p, result.searchUrl)
       )
+      const transformedPartsExcludedProducts = result.partsExcludedProducts?.map((p) =>
+        transformProduct(p, result.searchUrl)
+      ) ?? []
 
       await supabase
         .from('job_items')
         .update({
           status: 'completed',
-          result: { products: transformedProducts },
+          result: {
+            products: transformedProducts,
+            partsExcludedProducts: transformedPartsExcludedProducts,
+          },
           processed_at: new Date().toISOString(),
         })
         .eq('id', item.id)
@@ -325,6 +331,17 @@ async function processJobItem(
         level: 'success',
         message: `[완료] 파싱 결과: ${transformedProducts.length}개`,
       })
+      if (result.partsExcludedMeta?.triggered) {
+        await addWorkerLog({
+          jobId: item.job_id,
+          jobItemId: item.id,
+          modelName: item.model_name,
+          level: 'info',
+          message: result.partsExcludedMeta.page2Checked
+            ? `[부품 제외] 1페이지 ${result.partsExcludedMeta.page1Count}개, 2페이지 추가 ${result.partsExcludedMeta.page2AddedCount}개, 최종 ${result.partsExcludedMeta.finalCount}개`
+            : `[부품 제외] 1페이지 기준 ${result.partsExcludedMeta.finalCount}개`,
+        })
+      }
     }
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e)

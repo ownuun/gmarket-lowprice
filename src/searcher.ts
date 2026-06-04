@@ -41,6 +41,14 @@ export class GmarketSearcher {
     return `${GmarketSearcher.SEARCH_URL}?keyword=${encodeURIComponent(keyword)}${GmarketSearcher.FILTER_PARAMS}`;
   }
 
+  private buildPageUrl(searchUrl: string, pageNumber: number): string {
+    const url = new URL(searchUrl);
+    url.searchParams.set('k', '0');
+    url.searchParams.set('p', String(pageNumber));
+    url.searchParams.set('keep-ssid', 'y');
+    return url.toString();
+  }
+
   buildFilteredUrl(baseSearchUrl: string): string {
     if (baseSearchUrl.includes('s=1')) return baseSearchUrl;
     return baseSearchUrl + GmarketSearcher.FILTER_PARAMS;
@@ -100,9 +108,60 @@ export class GmarketSearcher {
       const products = await this.parser.parseSearchResults(page, modelName);
       console.log(`  파싱 결과: ${products.length}개`);
 
+      const hasPartsInLowestResults = products.some((product) =>
+        product.productName.includes('부품') && !modelName.includes('부품')
+      );
+      let partsExcludedProducts = hasPartsInLowestResults
+        ? await this.parser.parseSearchResults(page, modelName, {
+            excludeProductNameKeywords: this.parser.excludedProductNameKeywords,
+          })
+        : [];
+      const partsExcludedPage1Count = partsExcludedProducts.length;
+      let page2Checked = false;
+      let page2AddedCount = 0;
+
+      if (partsExcludedProducts.length > 0) {
+        console.log(`  부품 제외 결과: ${partsExcludedProducts.length}개`);
+      }
+
+      if (partsExcludedProducts.length > 0 && partsExcludedProducts.length <= 3) {
+        page2Checked = true;
+        const page2Url = this.buildPageUrl(searchUrl, 2);
+        console.log(`  부품 제외 결과 부족 - 2페이지 확인: ${page2Url}`);
+        await page.goto(page2Url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForTimeout(1500 + Math.random() * 1500);
+
+        if (!(await this.isBlocked(page))) {
+          await this.waitForProducts(page);
+          await page.waitForTimeout(500 + Math.random() * 1000);
+          const seen = new Set(
+            partsExcludedProducts.map((product) => product.productNo || product.productName),
+          );
+          const page2Products = await this.parser.parseSearchResults(page, modelName, {
+            excludeProductNameKeywords: this.parser.excludedProductNameKeywords,
+            maxItems: 10 - partsExcludedProducts.length,
+            rankOffset: 60,
+            skipProductKeys: seen,
+          });
+          page2AddedCount = page2Products.length;
+          partsExcludedProducts = [...partsExcludedProducts, ...page2Products].slice(0, 10);
+          console.log(`  부품 제외 결과(2페이지 포함): ${partsExcludedProducts.length}개`);
+        } else {
+          console.log('  [경고] 2페이지 확인 중 차단 감지 - 부품 제외 결과는 1페이지 기준만 사용');
+        }
+      }
+
       return {
         modelName,
         products,
+        partsExcludedProducts,
+        partsExcludedMeta: {
+          triggered: hasPartsInLowestResults,
+          page1Count: partsExcludedPage1Count,
+          page2Checked,
+          page2AddedCount,
+          finalCount: partsExcludedProducts.length,
+        },
         searchUrl,
         screenshotPath,
       };

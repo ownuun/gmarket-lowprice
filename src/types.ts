@@ -23,6 +23,14 @@ export interface Product {
 export interface SearchResult {
   modelName: string;
   products: Product[];
+  partsExcludedProducts?: Product[];
+  partsExcludedMeta?: {
+    triggered: boolean;
+    page1Count: number;
+    page2Checked: boolean;
+    page2AddedCount: number;
+    finalCount: number;
+  };
   searchUrl?: string;
   error?: string;
   screenshotPath?: string;
