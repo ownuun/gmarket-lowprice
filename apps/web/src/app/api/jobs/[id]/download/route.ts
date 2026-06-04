@@ -54,6 +54,7 @@ export async function GET(
     { header: '순위', key: 'rank', width: 6 },
     { header: '상품번호', key: 'product_no', width: 14 },
     { header: '모델명', key: 'model_name', width: 15 },
+    { header: '구분', key: 'result_type', width: 12 },
     { header: '상품명', key: 'product_name', width: 50 },
     { header: '판매자', key: 'seller', width: 15 },
     { header: '카테고리', key: 'category', width: 55 },
@@ -130,6 +131,50 @@ export async function GET(
     (a: { sequence: number }, b: { sequence: number }) => a.sequence - b.sequence
   )
 
+  type ExportProduct = {
+    rank: number
+    name: string
+    productNo?: string | null
+    originalPrice: number
+    discountPrice: number
+    discountPercent: number
+    shippingFee: number
+    totalPrice: number
+    seller: string
+    largeCategoryCode?: string | null
+    mediumCategoryCode?: string | null
+    smallCategoryCode?: string | null
+    largeCategoryName?: string | null
+    mediumCategoryName?: string | null
+    smallCategoryName?: string | null
+    url: string
+    searchUrl: string
+    crawledAt: string
+  }
+
+  const addProductRow = (item: { model_name: string }, product: ExportProduct, resultType: string) => {
+    const category = formatCategory(product)
+    maxCategoryLength = Math.max(maxCategoryLength, category.length)
+
+    worksheet.addRow({
+      rank: product.rank ?? '-',
+      model_name: item.model_name,
+      result_type: resultType,
+      product_name: product.name,
+      product_no: product.productNo || '-',
+      seller: product.seller,
+      category,
+      original_price: formatPrice(product.originalPrice),
+      discount_price: formatPrice(product.discountPrice),
+      discount_percent: formatPercent(product.discountPercent),
+      shipping_fee: formatShipping(product.shippingFee),
+      total_price: formatPrice(product.totalPrice),
+      url: product.url,
+      search_url: product.searchUrl || '-',
+      crawled_at: formatDateTime(product.crawledAt),
+    })
+  }
+
   // Add data rows
   let maxCategoryLength = '카테고리'.length
   for (let i = 0; i < sortedItems.length; i++) {
@@ -138,51 +183,20 @@ export async function GET(
     const isLastOfModel = !nextItem || nextItem.model_name !== item.model_name
 
     const result = item.result as {
-      products?: Array<{
-        rank: number
-        name: string
-        productNo?: string | null
-        originalPrice: number
-        discountPrice: number
-        discountPercent: number
-        shippingFee: number
-        totalPrice: number
-        seller: string
-        largeCategoryCode?: string | null
-        mediumCategoryCode?: string | null
-        smallCategoryCode?: string | null
-        largeCategoryName?: string | null
-        mediumCategoryName?: string | null
-        smallCategoryName?: string | null
-        url: string
-        searchUrl: string
-        crawledAt: string
-      }>
+      products?: ExportProduct[]
+      partsExcludedProducts?: ExportProduct[]
     } | null
 
     if (result?.products && result.products.length > 0) {
-      for (let j = 0; j < result.products.length; j++) {
-        const product = result.products[j]
-        const isLastProduct = j === result.products.length - 1
-        const category = formatCategory(product)
-        maxCategoryLength = Math.max(maxCategoryLength, category.length)
+      const rows = [
+        ...result.products.map((product) => ({ product, resultType: '최저가' })),
+        ...(result.partsExcludedProducts ?? []).map((product) => ({ product, resultType: '부품 제외' })),
+      ]
 
-        worksheet.addRow({
-          rank: product.rank ?? '-',
-          model_name: item.model_name,
-          product_name: product.name,
-          product_no: product.productNo || '-',
-          seller: product.seller,
-          category,
-          original_price: formatPrice(product.originalPrice),
-          discount_price: formatPrice(product.discountPrice),
-          discount_percent: formatPercent(product.discountPercent),
-          shipping_fee: formatShipping(product.shippingFee),
-          total_price: formatPrice(product.totalPrice),
-          url: product.url,
-          search_url: product.searchUrl || '-',
-          crawled_at: formatDateTime(product.crawledAt),
-        })
+      for (let j = 0; j < rows.length; j++) {
+        const row = rows[j]
+        const isLastProduct = j === rows.length - 1
+        addProductRow(item, row.product, row.resultType)
 
         // Add thick border at the end of each model group
         if (isLastOfModel && isLastProduct) {
@@ -200,6 +214,7 @@ export async function GET(
       worksheet.addRow({
         rank: '-',
         model_name: item.model_name,
+        result_type: '-',
         product_name: item.status === 'failed' ? item.error_message || '실패' : '결과 없음',
         product_no: '-',
         seller: '-',
