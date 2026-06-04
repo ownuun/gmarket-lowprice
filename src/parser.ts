@@ -11,7 +11,6 @@ interface CategoryInfo {
 }
 
 interface ParseSearchResultsOptions {
-  excludeProductNameKeywords?: string[];
   maxItems?: number;
   rankOffset?: number;
   skipProductKeys?: Set<string>;
@@ -19,7 +18,6 @@ interface ParseSearchResultsOptions {
 
 export class GmarketParser {
   private maxItems = 10; // 상위 10개 상품 파싱
-  readonly excludedProductNameKeywords = ['부품'];
 
   async parseSearchResults(
     page: Page,
@@ -41,7 +39,7 @@ export class GmarketParser {
 
     const products: Product[] = [];
     const maxItems = options.maxItems ?? this.maxItems;
-    const itemsToProcess = options.excludeProductNameKeywords ? items : items.slice(0, maxItems);
+    const itemsToProcess = items.slice(0, maxItems);
 
     for (let i = 0; i < itemsToProcess.length; i++) {
       try {
@@ -50,7 +48,6 @@ export class GmarketParser {
           modelName,
           (options.rankOffset ?? 0) + i + 1,
           categoryData,
-          options.excludeProductNameKeywords ?? [],
         );
         if (product) {
           const key = product.productNo || product.productName;
@@ -71,7 +68,6 @@ export class GmarketParser {
     modelName: string,
     rank: number,
     categoryData: Map<string, CategoryInfo>,
-    excludeProductNameKeywords: string[],
   ): Promise<Product | null> {
     // 상품명
     const productName = await this.extractText(item, [
@@ -80,10 +76,6 @@ export class GmarketParser {
       '[class*="text__item"]',
     ]);
     if (!productName) return null;
-    if (this.shouldExcludeByProductName(modelName, productName, excludeProductNameKeywords)) {
-      console.log(`  [제외] 상품명 제외 키워드 포함: ${productName.slice(0, 80)}`);
-      return null;
-    }
 
     // 가격 추출 (data-params-exp 속성에서 추출 - 가장 정확)
     const priceInfo = await this.extractPricesFromDataAttr(item);
@@ -182,16 +174,6 @@ export class GmarketParser {
       rank,
       crawledAt: new Date(),
     };
-  }
-
-  private shouldExcludeByProductName(
-    modelName: string,
-    productName: string,
-    excludedProductNameKeywords: string[],
-  ): boolean {
-    return excludedProductNameKeywords.some(
-      (keyword) => !modelName.includes(keyword) && productName.includes(keyword),
-    );
   }
 
   private async extractCategoryData(page: Page): Promise<Map<string, CategoryInfo>> {

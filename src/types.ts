@@ -9,6 +9,8 @@ export interface Product {
   productNo?: string | null;   // G마켓 상품번호 (goodscode)
   productUrl: string;
   searchUrl?: string;      // 검색 결과 페이지 URL
+  priceGroupLabel?: string;
+  clusterSourceSeller?: boolean;
   largeCategoryCode?: string | null;
   mediumCategoryCode?: string | null;
   smallCategoryCode?: string | null;
@@ -23,13 +25,13 @@ export interface Product {
 export interface SearchResult {
   modelName: string;
   products: Product[];
-  partsExcludedProducts?: Product[];
-  partsExcludedMeta?: {
-    triggered: boolean;
-    page1Count: number;
+  sellerClusterProducts?: Product[];
+  sellerClusterMeta?: {
+    sellerProductCount: number;
     page2Checked: boolean;
-    page2AddedCount: number;
-    finalCount: number;
+    clusterCount: number;
+    addedClusterCount: number;
+    addedProductCount: number;
   };
   searchUrl?: string;
   error?: string;

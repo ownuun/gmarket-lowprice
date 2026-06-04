@@ -132,6 +132,8 @@ function transformProduct(product: Product, searchUrl?: string) {
       (product.shippingFee ?? 0),
     seller: product.sellerName,
     productNo: product.productNo,
+    priceGroupLabel: product.priceGroupLabel,
+    clusterSourceSeller: product.clusterSourceSeller,
     url: product.productUrl,
     searchUrl: searchUrl || product.searchUrl,
     largeCategoryCode: product.largeCategoryCode,
@@ -307,7 +309,7 @@ async function processJobItem(
       const transformedProducts = result.products.map((p) =>
         transformProduct(p, result.searchUrl)
       )
-      const transformedPartsExcludedProducts = result.partsExcludedProducts?.map((p) =>
+      const transformedSellerClusterProducts = result.sellerClusterProducts?.map((p) =>
         transformProduct(p, result.searchUrl)
       ) ?? []
 
@@ -317,7 +319,7 @@ async function processJobItem(
           status: 'completed',
           result: {
             products: transformedProducts,
-            partsExcludedProducts: transformedPartsExcludedProducts,
+            sellerClusterProducts: transformedSellerClusterProducts,
           },
           processed_at: new Date().toISOString(),
         })
@@ -331,15 +333,13 @@ async function processJobItem(
         level: 'success',
         message: `[완료] 파싱 결과: ${transformedProducts.length}개`,
       })
-      if (result.partsExcludedMeta?.triggered) {
+      if (result.sellerClusterMeta && result.sellerClusterMeta.addedProductCount > 0) {
         await addWorkerLog({
           jobId: item.job_id,
           jobItemId: item.id,
           modelName: item.model_name,
           level: 'info',
-          message: result.partsExcludedMeta.page2Checked
-            ? `[부품 제외] 1페이지 ${result.partsExcludedMeta.page1Count}개, 2페이지 추가 ${result.partsExcludedMeta.page2AddedCount}개, 최종 ${result.partsExcludedMeta.finalCount}개`
-            : `[부품 제외] 1페이지 기준 ${result.partsExcludedMeta.finalCount}개`,
+          message: `[클러스터링] 판매계정 상품 ${result.sellerClusterMeta.sellerProductCount}개${result.sellerClusterMeta.page2Checked ? ' (2페이지 확인)' : ''}, 가격군 ${result.sellerClusterMeta.clusterCount}개 중 ${result.sellerClusterMeta.addedClusterCount}개 추가 (${result.sellerClusterMeta.addedProductCount}개)`,
         })
       }
     }
