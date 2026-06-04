@@ -126,6 +126,9 @@ export async function GET(
   const categoryColumn = worksheet.getColumn('category')
   categoryColumn.alignment = { wrapText: true, vertical: 'top' }
 
+  const productNameColumn = worksheet.getColumn('product_name')
+  productNameColumn.alignment = { wrapText: true, vertical: 'top' }
+
   // Sort job_items by sequence
   const sortedItems = [...(job.job_items || [])].sort(
     (a: { sequence: number }, b: { sequence: number }) => a.sequence - b.sequence
@@ -135,6 +138,8 @@ export async function GET(
     rank: number
     name: string
     productNo?: string | null
+    priceGroupLabel?: string | null
+    clusterSourceSeller?: boolean | null
     originalPrice: number
     discountPrice: number
     discountPercent: number
@@ -175,6 +180,24 @@ export async function GET(
     })
   }
 
+  const addHorizontalBorder = (weight: 'thin' | 'thick') => {
+    const row = worksheet.getRow(worksheet.rowCount)
+    row.eachCell((cell) => {
+      cell.border = {
+        bottom: { style: weight === 'thick' ? 'thick' : 'medium' },
+      }
+    })
+  }
+
+  const getProductSortPrice = (product: ExportProduct): number => {
+    return product.totalPrice ?? Number.MAX_SAFE_INTEGER
+  }
+
+  const getClusterSortNumber = (label: string | null | undefined): number => {
+    const match = label?.match(/클러스터링(\d+)/)
+    return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER
+  }
+
   // Add data rows
   let maxCategoryLength = '카테고리'.length
   for (let i = 0; i < sortedItems.length; i++) {
@@ -184,29 +207,38 @@ export async function GET(
 
     const result = item.result as {
       products?: ExportProduct[]
-      partsExcludedProducts?: ExportProduct[]
+      sellerClusterProducts?: ExportProduct[]
     } | null
 
-    if (result?.products && result.products.length > 0) {
+    if ((result?.products && result.products.length > 0) || (result?.sellerClusterProducts && result.sellerClusterProducts.length > 0)) {
+      const sortedClusterProducts = [...(result.sellerClusterProducts ?? [])].sort((a, b) => {
+        const clusterDiff = getClusterSortNumber(a.priceGroupLabel) - getClusterSortNumber(b.priceGroupLabel)
+        if (clusterDiff !== 0) return clusterDiff
+        if (Boolean(a.clusterSourceSeller) !== Boolean(b.clusterSourceSeller)) {
+          return a.clusterSourceSeller ? 1 : -1
+        }
+        return getProductSortPrice(a) - getProductSortPrice(b)
+      })
+
       const rows = [
-        ...result.products.map((product) => ({ product, resultType: '최저가' })),
-        ...(result.partsExcludedProducts ?? []).map((product) => ({ product, resultType: '부품 제외' })),
+        ...(result.products ?? []).map((product) => ({ product, resultType: '최저가' })),
+        ...sortedClusterProducts.map((product) => ({
+          product,
+          resultType: product.priceGroupLabel || '클러스터링',
+        })),
       ]
 
       for (let j = 0; j < rows.length; j++) {
         const row = rows[j]
         const isLastProduct = j === rows.length - 1
+        const nextRow = rows[j + 1]
+        const isLastOfResultType = !nextRow || nextRow.resultType !== row.resultType
         addProductRow(item, row.product, row.resultType)
 
-        // Add thick border at the end of each model group
         if (isLastOfModel && isLastProduct) {
-          const lastRow = worksheet.getRow(worksheet.rowCount)
-          lastRow.eachCell((cell) => {
-            cell.border = {
-              ...cell.border,
-              bottom: { style: 'thick' },
-            }
-          })
+          addHorizontalBorder('thick')
+        } else if (isLastOfResultType) {
+          addHorizontalBorder('thin')
         }
       }
     } else {
@@ -231,13 +263,7 @@ export async function GET(
 
       // Add thick border at the end of each model group
       if (isLastOfModel) {
-        const lastRow = worksheet.getRow(worksheet.rowCount)
-        lastRow.eachCell((cell) => {
-          cell.border = {
-            ...cell.border,
-            bottom: { style: 'thick' },
-          }
-        })
+        addHorizontalBorder('thick')
       }
     }
   }
