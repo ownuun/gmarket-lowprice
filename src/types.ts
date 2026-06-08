@@ -11,6 +11,9 @@ export interface Product {
   searchUrl?: string;      // 검색 결과 페이지 URL
   priceGroupLabel?: string;
   clusterSourceSeller?: boolean;
+  strategyLabel?: string;
+  matchScore?: number;
+  matchReasons?: string[];
   largeCategoryCode?: string | null;
   mediumCategoryCode?: string | null;
   smallCategoryCode?: string | null;
@@ -26,6 +29,15 @@ export interface SearchResult {
   modelName: string;
   products: Product[];
   sellerClusterProducts?: Product[];
+  strategyProducts?: Product[];
+  strategyMeta?: {
+    strategy: string;
+    confidence?: number;
+    priceBand?: { min: number; max: number; anchorPrice: number };
+    recommendedProductCount?: number;
+    candidateCount?: number;
+    reasons?: string[];
+  };
   sellerClusterMeta?: {
     sellerProductCount: number;
     page2Checked: boolean;

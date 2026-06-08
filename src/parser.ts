@@ -87,14 +87,11 @@ export class GmarketParser {
       // origin_price를 정가로 설정
       regularPrice = priceInfo.originPrice;
 
-      // 할인가 우선순위: coupon_price > promotion_price (정가보다 낮을 때만)
-      if (priceInfo.couponPrice && regularPrice && priceInfo.couponPrice < regularPrice) {
-        // 쿠폰 할인가
-        couponPrice = priceInfo.couponPrice;
-      } else if (priceInfo.promotionPrice && regularPrice && priceInfo.promotionPrice < regularPrice) {
-        // 프로모션 할인가 (쿠폰이 없을 때)
-        couponPrice = priceInfo.promotionPrice;
-      }
+      // 할인가 후보 중 가장 낮은 값을 최종 빨간 가격으로 사용
+      couponPrice = this.getLowestDiscountPrice(regularPrice, [
+        priceInfo.couponPrice,
+        priceInfo.promotionPrice,
+      ]);
 
       // 정가가 없으면 promotion_price를 정가로 사용
       if (!regularPrice) {
@@ -118,14 +115,13 @@ export class GmarketParser {
         ]);
       }
 
-      // 쿠폰가 추출 (정가보다 낮을 때만)
-      const htmlCouponPrice = await this.extractPrice(item, [
-        '.box__price-coupon strong.text__value',
-      ]);
-      if (htmlCouponPrice && regularPrice && htmlCouponPrice < regularPrice) {
-        couponPrice = htmlCouponPrice;
-      }
     }
+
+    // data-params-exp가 있어도 HTML에 더 낮은 최종 빨간 가격이 표시될 수 있음
+    const htmlCouponPrice = await this.extractPrice(item, [
+      '.box__price-coupon strong.text__value',
+    ]);
+    couponPrice = this.getLowestDiscountPrice(regularPrice, [couponPrice, htmlCouponPrice]);
 
     // 배송비 (태그에서 추출: "배송비 2,500원")
     const shippingFee = await this.extractShippingFee(item);
@@ -266,6 +262,15 @@ export class GmarketParser {
   private async extractPrice(element: any, selectors: string[]): Promise<number | null> {
     const text = await this.extractText(element, selectors);
     return this.parsePrice(text);
+  }
+
+  private getLowestDiscountPrice(regularPrice: number | null, prices: Array<number | null>): number | null {
+    const candidates = prices.filter((price): price is number => {
+      if (!price) return false;
+      return regularPrice ? price < regularPrice : true;
+    });
+    if (candidates.length === 0) return null;
+    return Math.min(...candidates);
   }
 
   private async extractPricesFromDataAttr(element: any): Promise<{

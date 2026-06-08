@@ -12,12 +12,14 @@ const CONCURRENCY = 1
 const MIN_DELAY = parseInt(process.env.WORKER_MIN_DELAY ?? '2000', 10)
 const MAX_DELAY = parseInt(process.env.WORKER_MAX_DELAY ?? '5000', 10)
 
-const CONTEXT_ROTATION_EVERY = 30
-const CONTEXT_COOLDOWN_MS = 8000
+const CONTEXT_ROTATION_EVERY = parseInt(process.env.WORKER_CONTEXT_ROTATION_EVERY ?? '30', 10)
+const CONTEXT_COOLDOWN_MS = parseInt(process.env.WORKER_CONTEXT_COOLDOWN_MS ?? '8000', 10)
 const BROWSER_RESTART_INTERVAL = 24 * 60 * 60 * 1000
 const BROWSER_RESTART_AFTER_JOBS = 300
 const MAX_RETRY_ON_BROWSER_ERROR = 2
-const MAX_RETRY_ON_BLOCKED = 1
+const MAX_RETRY_ON_BLOCKED = parseInt(process.env.WORKER_MAX_RETRY_ON_BLOCKED ?? '1', 10)
+const BLOCKED_RETRY_MIN_DELAY = parseInt(process.env.WORKER_BLOCKED_RETRY_MIN_DELAY ?? '900000', 10)
+const BLOCKED_RETRY_MAX_DELAY = parseInt(process.env.WORKER_BLOCKED_RETRY_MAX_DELAY ?? '1800000', 10)
 
 let lastBrowserRestart = Date.now()
 let jobsSinceRestart = 0
@@ -107,7 +109,13 @@ async function delay(ms: number): Promise<void> {
 }
 
 function randomDelay(): number {
-  return Math.floor(Math.random() * (MAX_DELAY - MIN_DELAY + 1)) + MIN_DELAY
+  return randomBetween(MIN_DELAY, MAX_DELAY)
+}
+
+function randomBetween(minMs: number, maxMs: number): number {
+  const min = Math.max(0, Math.min(minMs, maxMs))
+  const max = Math.max(min, maxMs)
+  return Math.floor(Math.random() * (max - min + 1)) + min
 }
 
 // 배열을 chunk로 분할
@@ -134,6 +142,9 @@ function transformProduct(product: Product, searchUrl?: string) {
     productNo: product.productNo,
     priceGroupLabel: product.priceGroupLabel,
     clusterSourceSeller: product.clusterSourceSeller,
+    strategyLabel: product.strategyLabel,
+    matchScore: product.matchScore,
+    matchReasons: product.matchReasons,
     url: product.productUrl,
     searchUrl: searchUrl || product.searchUrl,
     largeCategoryCode: product.largeCategoryCode,
@@ -220,15 +231,16 @@ async function processJobItem(
 
     while (result.error === 'BLOCKED' && retryCount < MAX_RETRY_ON_BLOCKED) {
       retryCount++
-      console.log(`[차단 재시도] ${item.model_name} - 브라우저 재시작 후 재시도 (${retryCount}/${MAX_RETRY_ON_BLOCKED})`)
+      const cooldown = randomBetween(BLOCKED_RETRY_MIN_DELAY, BLOCKED_RETRY_MAX_DELAY)
+      console.log(`[차단 쿨다운] ${item.model_name} - ${(cooldown / 1000 / 60).toFixed(1)}분 대기 후 브라우저 재시작 (${retryCount}/${MAX_RETRY_ON_BLOCKED})`)
       await addWorkerLog({
         jobId: item.job_id,
         jobItemId: item.id,
         modelName: item.model_name,
         level: 'warn',
-        message: `[차단 재시도] 브라우저 재시작 후 재시도 (${retryCount}/${MAX_RETRY_ON_BLOCKED})`,
+        message: `[차단 쿨다운] ${(cooldown / 1000 / 60).toFixed(1)}분 대기 후 브라우저 재시작 (${retryCount}/${MAX_RETRY_ON_BLOCKED})`,
       })
-      await delay(1000 + Math.random() * 1000)
+      await delay(cooldown)
       await browser.restart()
       lastBrowserRestart = Date.now()
       jobsSinceRestart = 0
@@ -312,6 +324,9 @@ async function processJobItem(
       const transformedSellerClusterProducts = result.sellerClusterProducts?.map((p) =>
         transformProduct(p, result.searchUrl)
       ) ?? []
+      const transformedStrategyProducts = result.strategyProducts?.map((p) =>
+        transformProduct(p, result.searchUrl)
+      ) ?? []
 
       await supabase
         .from('job_items')
@@ -320,6 +335,8 @@ async function processJobItem(
           result: {
             products: transformedProducts,
             sellerClusterProducts: transformedSellerClusterProducts,
+            strategyProducts: transformedStrategyProducts,
+            strategyMeta: result.strategyMeta,
           },
           processed_at: new Date().toISOString(),
         })
@@ -340,6 +357,15 @@ async function processJobItem(
           modelName: item.model_name,
           level: 'info',
           message: `[클러스터링] 판매계정 상품 ${result.sellerClusterMeta.sellerProductCount}개${result.sellerClusterMeta.page2Checked ? ' (2페이지 확인)' : ''}, 가격군 ${result.sellerClusterMeta.clusterCount}개 중 ${result.sellerClusterMeta.addedClusterCount}개 추가 (${result.sellerClusterMeta.addedProductCount}개)`,
+        })
+      }
+      if (result.strategyMeta && transformedStrategyProducts.length > 0) {
+        await addWorkerLog({
+          jobId: item.job_id,
+          jobItemId: item.id,
+          modelName: item.model_name,
+          level: 'info',
+          message: `[전략] ${result.strategyMeta.strategy} 모델최저가 ${transformedStrategyProducts.length}개${result.strategyMeta.priceBand ? ` (${result.strategyMeta.priceBand.min.toLocaleString()}-${result.strategyMeta.priceBand.max.toLocaleString()}원)` : ''}`,
         })
       }
     }
@@ -538,7 +564,8 @@ async function main(): Promise<void> {
   const tracker = new IncidentTracker(buildIncidentSettings())
 
   console.log('[준비] 브라우저 시작 완료')
-  console.log(`[설정] 딜레이: ${MIN_DELAY/1000}-${MAX_DELAY/1000}초, Context 교체: ${CONTEXT_ROTATION_EVERY}회마다`)
+  console.log(`[설정] 딜레이: ${MIN_DELAY/1000}-${MAX_DELAY/1000}초, Context 교체: ${CONTEXT_ROTATION_EVERY}회마다 (${CONTEXT_COOLDOWN_MS/1000}초 쿨다운)`)
+  console.log(`[설정] 차단 재시도: 최대 ${MAX_RETRY_ON_BLOCKED}회, 쿨다운 ${BLOCKED_RETRY_MIN_DELAY/1000/60}-${BLOCKED_RETRY_MAX_DELAY/1000/60}분`)
   console.log(`[설정] 브라우저 재시작: ${BROWSER_RESTART_INTERVAL/1000/60/60}시간 또는 ${BROWSER_RESTART_AFTER_JOBS}개 작업마다`)
   console.log(`[대기] ${POLL_INTERVAL / 1000}초마다 작업 확인 중...\n`)
 
