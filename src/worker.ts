@@ -405,6 +405,9 @@ function isBrowserError(error: string): boolean {
     'Session closed',
     'Connection closed',
     'Protocol error',
+    'net::ERR_TIMED_OUT',
+    'Timeout',
+    'Navigation timeout',
   ]
   return browserErrors.some(e => error.includes(e))
 }
