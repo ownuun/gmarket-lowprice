@@ -75,6 +75,7 @@ export async function GET(
     pattern: 'solid',
     fgColor: { argb: 'FFE0E0E0' },
   }
+  worksheet.getRow(1).alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
 
   // Helper function for price formatting
   const formatPrice = (price: number | null | undefined): string => {
@@ -124,10 +125,16 @@ export async function GET(
   }
 
   const categoryColumn = worksheet.getColumn('category')
-  categoryColumn.alignment = { wrapText: true, vertical: 'top' }
+  categoryColumn.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
 
   const productNameColumn = worksheet.getColumn('product_name')
-  productNameColumn.alignment = { wrapText: true, vertical: 'top' }
+  productNameColumn.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
+
+  const urlColumn = worksheet.getColumn('url')
+  urlColumn.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false }
+
+  const searchUrlColumn = worksheet.getColumn('search_url')
+  searchUrlColumn.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false }
 
   // Sort job_items by sequence
   const sortedItems = [...(job.job_items || [])].sort(
@@ -140,6 +147,7 @@ export async function GET(
     productNo?: string | null
     priceGroupLabel?: string | null
     clusterSourceSeller?: boolean | null
+    strategyLabel?: string | null
     originalPrice: number
     discountPrice: number
     discountPercent: number
@@ -184,8 +192,31 @@ export async function GET(
     const row = worksheet.getRow(worksheet.rowCount)
     row.eachCell((cell) => {
       cell.border = {
+        ...cell.border,
         bottom: { style: weight === 'thick' ? 'thick' : 'medium' },
       }
+    })
+  }
+
+  const applyTableStyle = () => {
+    worksheet.eachRow((row) => {
+      row.eachCell((cell, columnNumber) => {
+        const columnKey = worksheet.getColumn(columnNumber).key
+        const isUrlColumn = columnKey === 'url' || columnKey === 'search_url'
+        cell.alignment = {
+          horizontal: 'center',
+          vertical: 'middle',
+          wrapText: !isUrlColumn,
+          ...cell.alignment,
+          ...(isUrlColumn ? { wrapText: false } : {}),
+        }
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: cell.border?.bottom ?? { style: 'thin' },
+          right: { style: 'thin' },
+        }
+      })
     })
   }
 
@@ -208,10 +239,14 @@ export async function GET(
     const result = item.result as {
       products?: ExportProduct[]
       sellerClusterProducts?: ExportProduct[]
+      strategyProducts?: ExportProduct[]
     } | null
 
-    if ((result?.products && result.products.length > 0) || (result?.sellerClusterProducts && result.sellerClusterProducts.length > 0)) {
-      const sortedClusterProducts = [...(result.sellerClusterProducts ?? [])].sort((a, b) => {
+    const baseProducts = result?.products?.length ? result.products : result?.strategyProducts ?? []
+    const sellerClusterProducts = result?.sellerClusterProducts ?? []
+
+    if (baseProducts.length > 0 || sellerClusterProducts.length > 0) {
+      const sortedClusterProducts = [...sellerClusterProducts].sort((a, b) => {
         const clusterDiff = getClusterSortNumber(a.priceGroupLabel) - getClusterSortNumber(b.priceGroupLabel)
         if (clusterDiff !== 0) return clusterDiff
         if (Boolean(a.clusterSourceSeller) !== Boolean(b.clusterSourceSeller)) {
@@ -221,7 +256,7 @@ export async function GET(
       })
 
       const rows = [
-        ...(result.products ?? []).map((product) => ({ product, resultType: '최저가' })),
+        ...baseProducts.map((product) => ({ product, resultType: product.strategyLabel || '최저가' })),
         ...sortedClusterProducts.map((product) => ({
           product,
           resultType: product.priceGroupLabel || '클러스터링',
@@ -269,6 +304,12 @@ export async function GET(
   }
 
   categoryColumn.width = Math.min(Math.max(maxCategoryLength + 4, 24), 80)
+  worksheet.columns.forEach((column) => {
+    column.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
+  })
+  urlColumn.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false }
+  searchUrlColumn.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false }
+  applyTableStyle()
 
   // Generate buffer
   const buffer = await workbook.xlsx.writeBuffer()
