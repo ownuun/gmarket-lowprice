@@ -21,8 +21,9 @@ const BLOCKED_SIGNALS = [
 const UNCLE_SELLER_NAMES = ['(주)계양전동공구', '주식회사에이치원', '흥원닷컴'];
 const CLUSTER_GAP_THRESHOLD = 0.3;
 const CLUSTER_REPRESENTED_TOLERANCE = 0.15;
-const DEVICE_PRICE_BAND_TOLERANCE = 0.2;
+const DEVICE_PRICE_BAND_TOLERANCE = 0.25;
 const DEVICE_MIN_PRICE = 30000;
+const ANCHOR_PRICE_MIN_THRESHOLD = 10000;
 
 function getEnvInt(name: string, fallback: number): number {
   const value = Number.parseInt(process.env[name] ?? '', 10);
@@ -37,6 +38,8 @@ function randomDelayMs(minMs: number, maxMs: number): number {
 
 const MODEL_BAND_MIN_PHASE_DELAY = getEnvInt('MODEL_BAND_MIN_PHASE_DELAY', 8000);
 const MODEL_BAND_MAX_PHASE_DELAY = getEnvInt('MODEL_BAND_MAX_PHASE_DELAY', 12000);
+const MODEL_BAND_SPARSE_THRESHOLD = 2;
+const MODEL_BAND_SPARSE_RETRY_EXTRA_WAIT = 2500;
 
 type SearchStrategyName = 'lowprice' | 'model-band' | 'llm-assisted';
 
@@ -322,9 +325,54 @@ export class GmarketSearcher {
       lowPriceProducts = await this.parser.parseSearchResults(page, modelName, { maxItems: 120 });
     }
 
-    const products = lowPriceProducts
-      .filter((product) => this.isExactModelProduct(modelName, product.productName))
-      .filter((product) => this.isProductInPriceBand(product, activeBandDecision.min, activeBandDecision.max))
+    const exactBandFilter = (list: Product[]): Product[] =>
+      list
+        .filter((product) => this.isExactModelProduct(modelName, product.productName))
+        .filter((product) => this.isProductInPriceBand(product, activeBandDecision.min, activeBandDecision.max));
+
+    let exactBandProducts = exactBandFilter(lowPriceProducts);
+
+    if (exactBandProducts.length < MODEL_BAND_SPARSE_THRESHOLD) {
+      console.log(`  [전략] 가격대 결과 희박 (${exactBandProducts.length}개) - 가격대 검색 재파싱 시도`);
+      const retryDelay = randomDelayMs(MODEL_BAND_MIN_PHASE_DELAY, MODEL_BAND_MAX_PHASE_DELAY);
+      if (retryDelay > 0) {
+        console.log(`  [전략] 재시도 전 대기 ${(retryDelay / 1000).toFixed(1)}초`);
+        await page.waitForTimeout(retryDelay);
+      }
+      const retryUrl = this.buildPriceFilteredSearchUrl(modelName, activeBandDecision.min, activeBandDecision.max);
+      console.log(`  재시도 가격대 최저가 검색결과: ${retryUrl}`);
+      await page.goto(retryUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForTimeout(1500 + Math.random() * 1500);
+      const retryBlocked = await this.getBlockedResultIfNeeded(page, modelName, '재시도 가격대 최저가 상품 대기 건너뜀');
+      if (retryBlocked) return retryBlocked;
+      await this.waitForProducts(page);
+      await page.waitForTimeout(MODEL_BAND_SPARSE_RETRY_EXTRA_WAIT + Math.random() * 1000);
+      const retryProducts = await this.parser.parseSearchResults(page, modelName, { maxItems: 120 });
+      const retryExactBand = exactBandFilter(retryProducts);
+      console.log(
+        `  [전략] 재파싱 결과: 전체 ${retryProducts.length}개, 정확모델·가격대 ${retryExactBand.length}개`,
+      );
+      if (retryExactBand.length > exactBandProducts.length) {
+        lowPriceProducts = retryProducts;
+        exactBandProducts = retryExactBand;
+      }
+    }
+
+    if (exactBandProducts.length < MODEL_BAND_SPARSE_THRESHOLD) {
+      const seenKeys = new Set(exactBandProducts.map((product) => this.getProductKey(product)));
+      const recommendedFallback = exactBandFilter(recommendedProducts).filter((product) => {
+        const key = this.getProductKey(product);
+        if (seenKeys.has(key)) return false;
+        seenKeys.add(key);
+        return true;
+      });
+      if (recommendedFallback.length > 0) {
+        console.log(`  [전략] 가격대 결과 여전히 희박 - 추천순 후보에서 ${recommendedFallback.length}개 보완`);
+        exactBandProducts = [...exactBandProducts, ...recommendedFallback];
+      }
+    }
+
+    const products = exactBandProducts
       .sort((a, b) => this.getItemPrice(a)! - this.getItemPrice(b)!)
       .slice(0, 10)
       .map((product) => ({
@@ -421,9 +469,25 @@ export class GmarketSearcher {
     const uncleDeviceCandidates = scored.filter(
       (candidate) => this.isUncleSeller(candidate.product.sellerName) && this.getItemPrice(candidate.product) !== null,
     );
-    const primaryCandidate = uncleDeviceCandidates.length > 0
-      ? uncleDeviceCandidates.sort((a, b) => this.getItemPrice(a.product)! - this.getItemPrice(b.product)!)[0]
-      : scored[0];
+    let primaryCandidate: typeof scored[0] | null = null;
+    if (uncleDeviceCandidates.length > 0) {
+      // 선호: 만원 초과 삼촌 판매자 후보
+      const validUncleAboveThreshold = uncleDeviceCandidates.filter(
+        (candidate) => this.getItemPrice(candidate.product)! > ANCHOR_PRICE_MIN_THRESHOLD,
+      );
+      if (validUncleAboveThreshold.length > 0) {
+        primaryCandidate = validUncleAboveThreshold.sort(
+          (a, b) => this.getItemPrice(a.product)! - this.getItemPrice(b.product)!,
+        )[0];
+      } else {
+        // 폴백: 만원 이하 삼촌 판매자 (더 나은 대안 없을 때)
+        primaryCandidate = uncleDeviceCandidates.sort(
+          (a, b) => this.getItemPrice(a.product)! - this.getItemPrice(b.product)!,
+        )[0];
+      }
+    } else {
+      primaryCandidate = scored[0];
+    }
     const anchorPrice = this.getItemPrice(primaryCandidate.product);
     if (anchorPrice === null) return null;
 
