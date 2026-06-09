@@ -45,6 +45,7 @@ interface WorkerLog {
 
 type MainTab = 'crawling' | 'price-calc'
 type JobListTab = 'active' | 'archived'
+type PriceCalcVersion = 'v1' | 'v2'
 
 const LOG_LEVEL_STYLES: Record<
   WorkerLog['level'],
@@ -77,6 +78,7 @@ export default function DashboardPage() {
   const [gmarketFile, setGmarketFile] = useState<File | null>(null)
   const [selectedJobId, setSelectedJobId] = useState<string>('')
   const [gmarketSource, setGmarketSource] = useState<'job' | 'file'>('file')
+  const [priceCalcVersion, setPriceCalcVersion] = useState<PriceCalcVersion>('v1')
   const [calcLoading, setCalcLoading] = useState(false)
   const [calcResult, setCalcResult] = useState<{ matched: number; unmatched: number; vpsKept: number; vpsRemoved: number } | null>(null)
   const [calcError, setCalcError] = useState<string | null>(null)
@@ -130,6 +132,7 @@ export default function DashboardPage() {
       setTemplateFile(null)
       setGmarketFile(null)
       setSelectedJobId('')
+      setPriceCalcVersion('v1')
       setCalcResult(null)
       setCalcError(null)
       if (playautoInputRef.current) playautoInputRef.current.value = ''
@@ -312,6 +315,7 @@ export default function DashboardPage() {
 
     try {
       const formData = new FormData()
+      formData.append('version', priceCalcVersion)
       formData.append('playauto', playautoFile)
       formData.append('template', templateFile)
       if (gmarketSource === 'job' && selectedJobId) {
@@ -602,6 +606,39 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent>
               <form onSubmit={handlePriceCalc} className="space-y-4">
+                <div className="p-4 rounded-lg border bg-muted/20">
+                  <Label className="text-base font-semibold">계산 엔진</Label>
+                  <p className="text-xs text-muted-foreground mt-1 mb-3">
+                    기존 호환이 필요한 경우 v1을 사용하세요. v2는 크롤링 결과 기반 신규 계산을 위한 초기 버전입니다.
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => setPriceCalcVersion('v1')}
+                      className={`rounded-md border p-3 text-left transition-colors ${
+                        priceCalcVersion === 'v1'
+                          ? 'border-primary bg-background shadow-sm'
+                          : 'bg-background/60 hover:bg-background'
+                      }`}
+                    >
+                      <div className="font-medium">v1</div>
+                      <div className="text-xs text-muted-foreground">기존 가격 계산</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPriceCalcVersion('v2')}
+                      className={`rounded-md border p-3 text-left transition-colors ${
+                        priceCalcVersion === 'v2'
+                          ? 'border-primary bg-background shadow-sm'
+                          : 'bg-background/60 hover:bg-background'
+                      }`}
+                    >
+                      <div className="font-medium">v2</div>
+                      <div className="text-xs text-muted-foreground">크롤링 결과 기반 신규 계산(초기 버전)</div>
+                    </button>
+                  </div>
+                </div>
+
                 <div className={`p-4 rounded-lg border-2 transition-colors ${playautoFile ? 'border-green-500 bg-green-50/50' : 'border-dashed border-muted-foreground/25 bg-muted/30'}`}>
                   <div className="flex items-center gap-2 mb-3">
                     <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${playautoFile ? 'bg-green-500 text-white' : 'bg-muted-foreground/20 text-muted-foreground'}`}>1</div>

@@ -38,6 +38,19 @@ export interface GmarketIndex {
   [modelNorm: string]: GmarketRecord[]
 }
 
+export interface GmarketJobProduct {
+  seller: string
+  originalPrice: number | null
+  discountPercent: number | null
+}
+
+export interface GmarketJobItem {
+  model_name: string
+  result: {
+    products?: GmarketJobProduct[]
+  } | null
+}
+
 export interface TemplateRow {
   mallCode: string // 쇼핑몰코드 (A522, A523, A032, A113)
   mallId: string // 쇼핑몰ID (keyang09, h1cokr 등)
@@ -198,16 +211,7 @@ export function buildOutputRows(
 
 // DB job_items 결과를 GmarketIndex로 변환
 export function buildGmarketIndexFromJobItems(
-  jobItems: Array<{
-    model_name: string
-    result: {
-      products?: Array<{
-        seller: string
-        originalPrice: number
-        discountPercent: number | null
-      }>
-    } | null
-  }>
+  jobItems: GmarketJobItem[]
 ): GmarketIndex {
   const index: GmarketIndex = {}
 
@@ -217,7 +221,7 @@ export function buildGmarketIndexFromJobItems(
 
     const products = item.result?.products || []
     const recs: GmarketRecord[] = products
-      .filter((p) => p.originalPrice != null)
+      .filter((p): p is GmarketJobProduct & { originalPrice: number } => p.originalPrice != null)
       .map((p) => ({
         seller: p.seller || '',
         price: p.originalPrice,

@@ -1,5 +1,7 @@
 import ExcelJS from 'exceljs'
 import {
+  type GmarketIndex,
+  type GmarketRecord,
   type PlayautoProduct,
   type TemplateRow,
   type OutputRow,
@@ -157,6 +159,56 @@ export async function generateOutputExcel(
 
   const buffer = await workbook.xlsx.writeBuffer()
   return Buffer.from(buffer)
+}
+
+export async function parseGmarketExcel(buffer: ArrayBuffer): Promise<GmarketIndex> {
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.load(buffer)
+  const ws = workbook.worksheets[0]
+  const hm = headerMap(ws)
+
+  const required = ['모델명', '판매자', '정가', '할인율']
+  const missing = required.filter((k) => !hm[k])
+  if (missing.length > 0) {
+    throw new Error(`G마켓 엑셀에 필수 컬럼 누락: ${missing.join(', ')}`)
+  }
+
+  const index: GmarketIndex = {}
+
+  ws.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return
+
+    const modelRaw = row.getCell(hm['모델명']).value?.toString() || ''
+    const modelNorm = normModel(modelRaw)
+    if (!modelNorm) return
+
+    const price = parseIntegerCell(row.getCell(hm['정가']).value)
+    if (price === null) return
+
+    const seller = row.getCell(hm['판매자']).value?.toString().trim() || ''
+    const discount = parseIntegerCell(row.getCell(hm['할인율']).value)
+
+    const rec: GmarketRecord = { seller, price, discount }
+    if (!index[modelNorm]) {
+      index[modelNorm] = []
+    }
+    index[modelNorm].push(rec)
+  })
+
+  return index
+}
+
+function parseIntegerCell(value: ExcelJS.CellValue): number | null {
+  if (typeof value === 'number') {
+    return Math.round(value)
+  }
+
+  if (!value) {
+    return null
+  }
+
+  const digits = value.toString().replace(/[^0-9]/g, '')
+  return digits ? parseInt(digits, 10) : null
 }
 
 const VPS_MEMO_PREFIX = 'VPS / '
