@@ -91,7 +91,7 @@ export default function DashboardPage() {
   const [gmarketFile, setGmarketFile] = useState<File | null>(null)
   const [selectedJobId, setSelectedJobId] = useState<string>('')
   const [gmarketSource, setGmarketSource] = useState<'job' | 'file'>('file')
-  const [priceCalcVersion, setPriceCalcVersion] = useState<PriceCalcVersion>('v1')
+  const [priceCalcVersion, setPriceCalcVersion] = useState<PriceCalcVersion>('v2')
   const [calcLoading, setCalcLoading] = useState(false)
   const [calcResult, setCalcResult] = useState<{ matched: number; unmatched: number; vpsKept: number; vpsRemoved: number } | null>(null)
   const [calcError, setCalcError] = useState<string | null>(null)
@@ -154,7 +154,7 @@ export default function DashboardPage() {
       setTemplateFile(null)
       setGmarketFile(null)
       setSelectedJobId('')
-      setPriceCalcVersion('v1')
+      setPriceCalcVersion('v2')
       setCalcResult(null)
       setCalcError(null)
       if (playautoInputRef.current) playautoInputRef.current.value = ''
