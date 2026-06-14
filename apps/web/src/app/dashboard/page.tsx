@@ -107,6 +107,9 @@ export default function DashboardPage() {
   const templateInputRef = useRef<HTMLInputElement>(null)
   const gmarketInputRef = useRef<HTMLInputElement>(null)
 
+  // 드래그앤드롭으로 강조 중인 박스 키 (박스별로 구분)
+  const [dragActiveKey, setDragActiveKey] = useState<string | null>(null)
+
   const supabase = createClient()
   const isV2PriceCalc = priceCalcVersion === 'v2'
   const primaryFileLabel = isV2PriceCalc ? '플토 엑셀' : '플레이오토 엑셀'
@@ -307,6 +310,42 @@ export default function DashboardPage() {
 
     setActionLoading((prev) => ({ ...prev, [jobId]: null }))
   }
+
+  const isValidExcelFile = (file: File) => /\.(xlsx|xls)$/i.test(file.name)
+
+  // 드롭존 핸들러 팩토리: 4개 업로드 박스에서 재사용한다.
+  // key=박스 식별자, setFile=해당 set함수, inputRef=동기화할 hidden input ref(있으면)
+  const createDropHandlers = (
+    key: string,
+    setFile: (file: File | null) => void,
+    inputRef?: React.RefObject<HTMLInputElement>
+  ) => ({
+    onDragOver: (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      if (dragActiveKey !== key) setDragActiveKey(key)
+    },
+    onDragLeave: (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      // 자식 요소로 이동할 때의 깜빡임 방지: 박스 밖으로 나갈 때만 해제
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+        setDragActiveKey((prev) => (prev === key ? null : prev))
+      }
+    },
+    onDrop: (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      setDragActiveKey((prev) => (prev === key ? null : prev))
+      const file = e.dataTransfer.files?.[0]
+      if (!file) return
+      if (!isValidExcelFile(file)) {
+        setCalcError('엑셀 파일(.xlsx, .xls)만 첨부할 수 있습니다.')
+        return
+      }
+      setCalcError(null)
+      setFile(file)
+      // hidden input과 상태 동기화 (드롭으로 받은 파일은 input.files에 직접 못 넣으므로 값만 비운다)
+      if (inputRef?.current) inputRef.current.value = ''
+    },
+  })
 
   const handlePriceCalc = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -677,7 +716,10 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div className={`p-4 rounded-lg border-2 transition-colors ${playautoFile ? 'border-green-500 bg-green-50/50' : 'border-dashed border-muted-foreground/25 bg-muted/30'}`}>
+                <div
+                  {...createDropHandlers('playauto', setPlayautoFile, playautoInputRef)}
+                  className={`p-4 rounded-lg border-2 transition-colors ${dragActiveKey === 'playauto' ? 'border-primary bg-primary/5 ring-2 ring-primary/30' : playautoFile ? 'border-green-500 bg-green-50/50' : 'border-dashed border-muted-foreground/25 bg-muted/30'}`}
+                >
                   <div className="flex items-center gap-2 mb-3">
                     <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${playautoFile ? 'bg-green-500 text-white' : 'bg-muted-foreground/20 text-muted-foreground'}`}>1</div>
                     <Label className="text-base font-semibold">{primaryFileLabel}</Label>
@@ -717,7 +759,10 @@ export default function DashboardPage() {
                 </div>
 
                 {isV2PriceCalc && (
-                <div className={`p-4 rounded-lg border-2 transition-colors ${gmarketFile ? 'border-green-500 bg-green-50/50' : 'border-dashed border-muted-foreground/25 bg-muted/30'}`}>
+                <div
+                  {...createDropHandlers('gmarketV2', setGmarketFile, gmarketInputRef)}
+                  className={`p-4 rounded-lg border-2 transition-colors ${dragActiveKey === 'gmarketV2' ? 'border-primary bg-primary/5 ring-2 ring-primary/30' : gmarketFile ? 'border-green-500 bg-green-50/50' : 'border-dashed border-muted-foreground/25 bg-muted/30'}`}
+                >
                   <div className="flex items-center gap-2 mb-3">
                     <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${gmarketFile ? 'bg-green-500 text-white' : 'bg-muted-foreground/20 text-muted-foreground'}`}>2</div>
                     <Label className="text-base font-semibold">{gmarketFileLabel}</Label>
@@ -797,7 +842,10 @@ export default function DashboardPage() {
                   </div>
 
                   {gmarketSource === 'file' ? (
-                    <div className="space-y-2">
+                    <div
+                      {...createDropHandlers('gmarketV1', setGmarketFile, gmarketInputRef)}
+                      className={`space-y-2 rounded-md p-2 -m-2 transition-colors ${dragActiveKey === 'gmarketV1' ? 'ring-2 ring-primary/40 bg-primary/5' : ''}`}
+                    >
                       <p className="text-xs text-muted-foreground mb-2">
                         {gmarketFileHelp}
                       </p>
@@ -858,7 +906,10 @@ export default function DashboardPage() {
                 )}
 
                 {!isV2PriceCalc && (
-                  <div className={`p-4 rounded-lg border-2 transition-colors ${templateFile ? 'border-green-500 bg-green-50/50' : 'border-dashed border-muted-foreground/25 bg-muted/30'}`}>
+                  <div
+                    {...createDropHandlers('template', setTemplateFile, templateInputRef)}
+                    className={`p-4 rounded-lg border-2 transition-colors ${dragActiveKey === 'template' ? 'border-primary bg-primary/5 ring-2 ring-primary/30' : templateFile ? 'border-green-500 bg-green-50/50' : 'border-dashed border-muted-foreground/25 bg-muted/30'}`}
+                  >
                     <div className="flex items-center gap-2 mb-3">
                       <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${templateFile ? 'bg-green-500 text-white' : 'bg-muted-foreground/20 text-muted-foreground'}`}>3</div>
                       <Label className="text-base font-semibold">템플릿 엑셀</Label>
