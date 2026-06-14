@@ -14,6 +14,11 @@ const V2_REQUIRED_HEADERS = ['판매가', '모델명', '바코드'] as const
 const BARCODE_VPS_PREFIX = 'VPS / '
 const PRICE_UNDERCUT = 10
 
+// 판매가 변동 셀 음영. 변화율 10% 미만은 초록, 이상은 빨강(엑셀 표준 green/red 음영).
+const PRICE_CHANGE_THRESHOLD = 0.1
+const FILL_GREEN_ARGB = 'FFC6EFCE'
+const FILL_RED_ARGB = 'FFFFC7CE'
+
 // 자사(우리) 판매자. 모델별 최저가 판매자가 자사면 언더컷(-10)하지 않고 최저가 그대로 둔다.
 const SELF_SELLERS = new Set<string>([SELLER_KEYANG, SELLER_H1, '흥원닷컴'])
 
@@ -135,7 +140,15 @@ async function buildV2Result(input: V2CalculationInput) {
       return
     }
 
-    row.getCell(priceCol).value = newPrice
+    const priceCell = row.getCell(priceCol)
+    // 덮어쓰기 전에 원래 판매가를 캡처(콤마/₩/공백 제거 후 숫자 파싱).
+    const oldPrice = parsePriceNumber(cellText(priceCell))
+    priceCell.value = newPrice
+
+    // 변동 셀 색칠: 변동 없으면 색 없음, 변화율<10% 초록, ≥10% 빨강.
+    // 색칠 판정은 -10(자사/타사) 로직과 무관하게 oldPrice vs newPrice 차이만으로 한다.
+    applyPriceChangeFill(priceCell, oldPrice, newPrice)
+
     matchedCount++
   })
 
@@ -177,6 +190,59 @@ function prefixBarcodeCell(cell: ExcelJS.Cell): void {
   }
 
   cell.value = BARCODE_VPS_PREFIX + value
+}
+
+// 콤마/₩/공백 등을 제거하고 판매가를 숫자로 파싱. 파싱 불가 시 null.
+function parsePriceNumber(text: string): number | null {
+  const cleaned = text.replace(/[^0-9.-]/g, '')
+  if (!cleaned || cleaned === '-' || cleaned === '.') return null
+  const n = Number(cleaned)
+  return Number.isFinite(n) ? n : null
+}
+
+// 변동 셀 색칠: 변동 없거나 oldPrice 미상이면 색 없음.
+// 변화율 = |new-old|/old. 10% 미만 초록, 이상 빨강.
+// old가 0/파싱불가인데 값이 바뀌었으면 % 계산 불가 → 초록.
+//
+// NOTE(ExcelJS): 동일 스타일을 공유하는 셀에 .fill 을 지정하면 형제 셀로 색이 번지는
+// 공유 스타일 버그가 있다. 따라서 "색 없음" 케이스도 셀마다 명시적으로 pattern:none 을
+// 지정해 각 셀이 자기 스타일을 소유하도록 한다(번짐 방지).
+function applyPriceChangeFill(
+  cell: ExcelJS.Cell,
+  oldPrice: number | null,
+  newPrice: number
+): void {
+  if (oldPrice === null || oldPrice === 0) {
+    // % 계산 불가하지만 값이 바뀐 경우(이 함수는 변경된 셀에서만 호출됨) → 초록.
+    setSolidFill(cell, FILL_GREEN_ARGB)
+    return
+  }
+
+  if (oldPrice === newPrice) {
+    clearFill(cell)
+    return
+  }
+
+  const changeRate = Math.abs(newPrice - oldPrice) / Math.abs(oldPrice)
+  setSolidFill(cell, changeRate >= PRICE_CHANGE_THRESHOLD ? FILL_RED_ARGB : FILL_GREEN_ARGB)
+}
+
+function setSolidFill(cell: ExcelJS.Cell, argb: string): void {
+  detachCellStyle(cell)
+  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb } }
+}
+
+// 공유 스타일 번짐 방지를 위해 색 없음도 명시적으로 지정한다.
+function clearFill(cell: ExcelJS.Cell): void {
+  detachCellStyle(cell)
+  cell.fill = { type: 'pattern', pattern: 'none' }
+}
+
+// ExcelJS는 동일 스타일 셀들이 하나의 style 객체를 공유한다. 그 상태로 cell.fill 을
+// 바꾸면 형제 셀까지 색이 번진다. fill 변경 전에 해당 셀의 style 을 독립 복제해
+// 자기만의 style 객체를 갖게 만든다.
+function detachCellStyle(cell: ExcelJS.Cell): void {
+  cell.style = JSON.parse(JSON.stringify(cell.style ?? {}))
 }
 
 function headerMap(worksheet: ExcelJS.Worksheet): Record<string, number> {
