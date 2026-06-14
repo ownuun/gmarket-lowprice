@@ -63,6 +63,19 @@ const formatLogTime = (iso: string) => {
   return d.toLocaleTimeString('ko-KR', { hour12: false })
 }
 
+const getDownloadFileName = (response: Response, isV2: boolean) => {
+  const fallback = `가격계산${isV2 ? '_v2' : ''}_${new Date().toISOString().split('T')[0]}${isV2 ? '.xlsx' : '.zip'}`
+  const disposition = response.headers.get('Content-Disposition')
+  const match = disposition?.match(/filename="?([^";]+)"?/)
+  if (!match?.[1]) return fallback
+
+  try {
+    return decodeURIComponent(match[1])
+  } catch {
+    return match[1]
+  }
+}
+
 export default function DashboardPage() {
   const [mainTab, setMainTab] = useState<MainTab>('crawling')
   const [models, setModels] = useState('')
@@ -95,6 +108,15 @@ export default function DashboardPage() {
   const gmarketInputRef = useRef<HTMLInputElement>(null)
 
   const supabase = createClient()
+  const isV2PriceCalc = priceCalcVersion === 'v2'
+  const primaryFileLabel = isV2PriceCalc ? '플토 엑셀' : '플레이오토 엑셀'
+  const primaryFileHelp = isV2PriceCalc
+    ? '쇼핑몰상품 시트를 포함한 플토 양식 (모델명, 판매가, 바코드)'
+    : '상품 목록 (업체상품코드, 모델명, 상품명, 한줄메모)'
+  const gmarketFileLabel = isV2PriceCalc ? '올윈크롤 엑셀' : 'G마켓 가격 데이터'
+  const gmarketFileHelp = isV2PriceCalc
+    ? '올윈크롤 결과 (필수 컬럼: 모델명, 판매자, 정가, 할인율). 각 모델 최저가-10원으로 플토 판매가를 세팅합니다.'
+    : '필수 컬럼: 모델명, 판매자, 정가, 할인율'
 
   useEffect(() => {
     const getUser = async () => {
@@ -292,21 +314,26 @@ export default function DashboardPage() {
     setCalcResult(null)
 
     if (!playautoFile) {
-      setCalcError('플레이오토 엑셀 파일을 선택해주세요.')
+      setCalcError(isV2PriceCalc ? '플토 엑셀 파일을 선택해주세요.' : '플레이오토 엑셀 파일을 선택해주세요.')
       return
     }
 
-    if (!templateFile) {
+    if (isV2PriceCalc && !gmarketFile) {
+      setCalcError('올윈크롤 엑셀 파일을 업로드해주세요.')
+      return
+    }
+
+    if (!isV2PriceCalc && !templateFile) {
       setCalcError('템플릿 엑셀 파일을 선택해주세요.')
       return
     }
 
-    if (gmarketSource === 'job' && !selectedJobId) {
+    if (!isV2PriceCalc && gmarketSource === 'job' && !selectedJobId) {
       setCalcError('크롤링 작업을 선택해주세요.')
       return
     }
 
-    if (gmarketSource === 'file' && !gmarketFile) {
+    if (!isV2PriceCalc && gmarketSource === 'file' && !gmarketFile) {
       setCalcError('G마켓 엑셀 파일을 업로드해주세요.')
       return
     }
@@ -317,11 +344,16 @@ export default function DashboardPage() {
       const formData = new FormData()
       formData.append('version', priceCalcVersion)
       formData.append('playauto', playautoFile)
-      formData.append('template', templateFile)
-      if (gmarketSource === 'job' && selectedJobId) {
+      if (isV2PriceCalc && gmarketFile) {
+        formData.append('gmarket', gmarketFile)
+      }
+      if (!isV2PriceCalc && templateFile) {
+        formData.append('template', templateFile)
+      }
+      if (!isV2PriceCalc && gmarketSource === 'job' && selectedJobId) {
         formData.append('jobId', selectedJobId)
       }
-      if (gmarketSource === 'file' && gmarketFile) {
+      if (!isV2PriceCalc && gmarketSource === 'file' && gmarketFile) {
         formData.append('gmarket', gmarketFile)
       }
 
@@ -345,7 +377,7 @@ export default function DashboardPage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `가격계산_${new Date().toISOString().split('T')[0]}.zip`
+      a.download = getDownloadFileName(res, isV2PriceCalc)
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -609,7 +641,7 @@ export default function DashboardPage() {
                 <div className="p-4 rounded-lg border bg-muted/20">
                   <Label className="text-base font-semibold">계산 엔진</Label>
                   <p className="text-xs text-muted-foreground mt-1 mb-3">
-                    기존 호환이 필요한 경우 v1을 사용하세요. v2는 크롤링 결과 기반 신규 계산을 위한 초기 버전입니다.
+                    기존 호환이 필요한 경우 v1을 사용하세요. v2는 플토 + 올윈크롤 엑셀을 받아 각 모델의 크롤 최저가-10원으로 플토 판매가를 세팅하고 바코드를 VPS 형식으로 보정합니다.
                   </p>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <button
@@ -626,7 +658,13 @@ export default function DashboardPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setPriceCalcVersion('v2')}
+                      onClick={() => {
+                        setPriceCalcVersion('v2')
+                        setTemplateFile(null)
+                        setSelectedJobId('')
+                        setGmarketSource('file')
+                        if (templateInputRef.current) templateInputRef.current.value = ''
+                      }}
                       className={`rounded-md border p-3 text-left transition-colors ${
                         priceCalcVersion === 'v2'
                           ? 'border-primary bg-background shadow-sm'
@@ -634,7 +672,7 @@ export default function DashboardPage() {
                       }`}
                     >
                       <div className="font-medium">v2</div>
-                      <div className="text-xs text-muted-foreground">크롤링 결과 기반 신규 계산(초기 버전)</div>
+                      <div className="text-xs text-muted-foreground">플토 판매가를 올윈크롤 최저가로 세팅</div>
                     </button>
                   </div>
                 </div>
@@ -642,10 +680,10 @@ export default function DashboardPage() {
                 <div className={`p-4 rounded-lg border-2 transition-colors ${playautoFile ? 'border-green-500 bg-green-50/50' : 'border-dashed border-muted-foreground/25 bg-muted/30'}`}>
                   <div className="flex items-center gap-2 mb-3">
                     <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${playautoFile ? 'bg-green-500 text-white' : 'bg-muted-foreground/20 text-muted-foreground'}`}>1</div>
-                    <Label className="text-base font-semibold">플레이오토 엑셀</Label>
+                    <Label className="text-base font-semibold">{primaryFileLabel}</Label>
                     {playautoFile && <span className="text-green-600 text-sm">✓</span>}
                   </div>
-                  <p className="text-xs text-muted-foreground mb-3">상품 목록 (업체상품코드, 모델명, 상품명, 한줄메모)</p>
+                  <p className="text-xs text-muted-foreground mb-3">{primaryFileHelp}</p>
                   <input
                     ref={playautoInputRef}
                     type="file"
@@ -678,6 +716,48 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
+                {isV2PriceCalc && (
+                <div className={`p-4 rounded-lg border-2 transition-colors ${gmarketFile ? 'border-green-500 bg-green-50/50' : 'border-dashed border-muted-foreground/25 bg-muted/30'}`}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${gmarketFile ? 'bg-green-500 text-white' : 'bg-muted-foreground/20 text-muted-foreground'}`}>2</div>
+                    <Label className="text-base font-semibold">{gmarketFileLabel}</Label>
+                    {gmarketFile && <span className="text-green-600 text-sm">✓</span>}
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-3">{gmarketFileHelp}</p>
+                  <input
+                    ref={gmarketInputRef}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={(e) => setGmarketFile(e.target.files?.[0] || null)}
+                    className="hidden"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1 justify-start font-normal"
+                      onClick={() => gmarketInputRef.current?.click()}
+                    >
+                      {gmarketFile ? gmarketFile.name : '파일 선택...'}
+                    </Button>
+                    {gmarketFile && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setGmarketFile(null)
+                          if (gmarketInputRef.current) gmarketInputRef.current.value = ''
+                        }}
+                      >
+                        ✕
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                )}
+
+                {!isV2PriceCalc && (
                 <div className={`p-4 rounded-lg border-2 transition-colors ${(gmarketSource === 'file' && gmarketFile) || (gmarketSource === 'job' && selectedJobId) ? 'border-green-500 bg-green-50/50' : 'border-dashed border-muted-foreground/25 bg-muted/30'}`}>
                   <div className="flex items-center gap-2 mb-3">
                     <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${(gmarketSource === 'file' && gmarketFile) || (gmarketSource === 'job' && selectedJobId) ? 'bg-green-500 text-white' : 'bg-muted-foreground/20 text-muted-foreground'}`}>2</div>
@@ -719,7 +799,7 @@ export default function DashboardPage() {
                   {gmarketSource === 'file' ? (
                     <div className="space-y-2">
                       <p className="text-xs text-muted-foreground mb-2">
-                        필수 컬럼: 모델명, 판매자, 정가, 할인율
+                        {gmarketFileHelp}
                       </p>
                       <input
                         ref={gmarketInputRef}
@@ -775,45 +855,48 @@ export default function DashboardPage() {
                     </div>
                   )}
                 </div>
+                )}
 
-                <div className={`p-4 rounded-lg border-2 transition-colors ${templateFile ? 'border-green-500 bg-green-50/50' : 'border-dashed border-muted-foreground/25 bg-muted/30'}`}>
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${templateFile ? 'bg-green-500 text-white' : 'bg-muted-foreground/20 text-muted-foreground'}`}>3</div>
-                    <Label className="text-base font-semibold">템플릿 엑셀</Label>
-                    {templateFile && <span className="text-green-600 text-sm">✓</span>}
-                  </div>
-                  <p className="text-xs text-muted-foreground mb-3">쇼핑몰별 양식 (마스터상품코드, 쇼핑몰코드, 쇼핑몰ID, 판매가)</p>
-                  <input
-                    ref={templateInputRef}
-                    type="file"
-                    accept=".xlsx,.xls"
-                    onChange={(e) => setTemplateFile(e.target.files?.[0] || null)}
-                    className="hidden"
-                  />
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="flex-1 justify-start font-normal"
-                      onClick={() => templateInputRef.current?.click()}
-                    >
-                      {templateFile ? templateFile.name : '파일 선택...'}
-                    </Button>
-                    {templateFile && (
+                {!isV2PriceCalc && (
+                  <div className={`p-4 rounded-lg border-2 transition-colors ${templateFile ? 'border-green-500 bg-green-50/50' : 'border-dashed border-muted-foreground/25 bg-muted/30'}`}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${templateFile ? 'bg-green-500 text-white' : 'bg-muted-foreground/20 text-muted-foreground'}`}>3</div>
+                      <Label className="text-base font-semibold">템플릿 엑셀</Label>
+                      {templateFile && <span className="text-green-600 text-sm">✓</span>}
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-3">쇼핑몰별 양식 (마스터상품코드, 쇼핑몰코드, 쇼핑몰ID, 판매가)</p>
+                    <input
+                      ref={templateInputRef}
+                      type="file"
+                      accept=".xlsx,.xls"
+                      onChange={(e) => setTemplateFile(e.target.files?.[0] || null)}
+                      className="hidden"
+                    />
+                    <div className="flex gap-2">
                       <Button
                         type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setTemplateFile(null)
-                          if (templateInputRef.current) templateInputRef.current.value = ''
-                        }}
+                        variant="outline"
+                        className="flex-1 justify-start font-normal"
+                        onClick={() => templateInputRef.current?.click()}
                       >
-                        ✕
+                        {templateFile ? templateFile.name : '파일 선택...'}
                       </Button>
-                    )}
+                      {templateFile && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setTemplateFile(null)
+                            if (templateInputRef.current) templateInputRef.current.value = ''
+                          }}
+                        >
+                          ✕
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {calcError && (
                   <div className="p-3 bg-red-50 border border-red-200 rounded-md text-red-700 text-sm">
@@ -823,9 +906,17 @@ export default function DashboardPage() {
 
                 {calcResult && (
                   <div className="p-3 bg-green-50 border border-green-200 rounded-md text-green-700 text-sm space-y-1">
-                    <div>ZIP 파일 다운로드 완료!</div>
-                    <div>- 옥지11SSG: 매칭 {calcResult.matched}개 / 미매칭 {calcResult.unmatched}개</div>
-                    <div>- EMP(VPS): {calcResult.vpsKept}행 유지 / {calcResult.vpsRemoved}행 제거</div>
+                    <div>{isV2PriceCalc ? '엑셀 파일 다운로드 완료!' : 'ZIP 파일 다운로드 완료!'}</div>
+                    <div>
+                      {isV2PriceCalc
+                        ? `- 판매가 갱신: ${calcResult.matched}개 / 미매칭: ${calcResult.unmatched}개`
+                        : `- 가격 매칭: 매칭 ${calcResult.matched}개 / 미매칭 ${calcResult.unmatched}개`}
+                    </div>
+                    {isV2PriceCalc ? (
+                      <div>- 처리한 데이터 행: {calcResult.vpsKept}행</div>
+                    ) : (
+                      <div>- VPS: {calcResult.vpsKept}행 유지 / {calcResult.vpsRemoved}행 제거</div>
+                    )}
                   </div>
                 )}
 
@@ -834,9 +925,10 @@ export default function DashboardPage() {
                   disabled={
                     calcLoading ||
                     !playautoFile ||
-                    !templateFile ||
-                    (gmarketSource === 'job' && !selectedJobId) ||
-                    (gmarketSource === 'file' && !gmarketFile)
+                    (isV2PriceCalc && !gmarketFile) ||
+                    (!isV2PriceCalc && !templateFile) ||
+                    (!isV2PriceCalc && gmarketSource === 'job' && !selectedJobId) ||
+                    (!isV2PriceCalc && gmarketSource === 'file' && !gmarketFile)
                   }
                   className="w-full"
                 >

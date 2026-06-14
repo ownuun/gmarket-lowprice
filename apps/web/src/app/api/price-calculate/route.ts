@@ -44,10 +44,10 @@ export async function POST(request: Request) {
 
     await supabase.from('price_calc_jobs').insert(result.history)
 
-    return new Response(result.zipBuffer, {
+    return new Response(result.bodyBuffer, {
       headers: {
-        'Content-Type': 'application/zip',
-        'Content-Disposition': `attachment; filename="${encodeURIComponent(result.zipFileName)}"`,
+        'Content-Type': result.contentType,
+        'Content-Disposition': `attachment; filename="${encodeURIComponent(result.downloadFileName)}"`,
         'X-Matched-Count': result.matchedCount.toString(),
         'X-Unmatched-Count': result.unmatchedCount.toString(),
         'X-VPS-Kept-Rows': result.vpsKeptRows.toString(),

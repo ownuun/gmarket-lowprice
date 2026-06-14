@@ -36,15 +36,16 @@ export interface PriceCalcHistoryInsert {
 
 export interface PriceCalcResult extends PriceCalcMetrics {
   version: PriceCalcVersion
-  zipBuffer: ArrayBuffer
-  zipFileName: string
+  bodyBuffer: ArrayBuffer
+  downloadFileName: string
+  contentType: string
   history: PriceCalcHistoryInsert
 }
 
 export interface PriceCalcInputPolicy {
   requiresPlayauto: boolean
   requiresTemplate: boolean
-  gmarketSource: 'job-or-file'
+  gmarketSource: 'job-or-file' | 'file' | 'none'
 }
 
 export interface PriceCalcPlugin {

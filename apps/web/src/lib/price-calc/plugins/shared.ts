@@ -204,8 +204,9 @@ export async function buildCompatiblePriceCalcResult(
 
   return {
     version: input.version,
-    zipBuffer,
-    zipFileName: `가격계산_${dateStr}.zip`,
+    bodyBuffer: zipBuffer,
+    downloadFileName: `가격계산_${dateStr}.zip`,
+    contentType: 'application/zip',
     history,
     ...metrics,
   }
