@@ -10,7 +10,7 @@ const V2_INPUT_POLICY = {
 }
 
 const SHOPPING_MALL_PRODUCT_SHEET = '쇼핑몰상품'
-const V2_REQUIRED_HEADERS = ['판매가', '모델명', '바코드'] as const
+const V2_REQUIRED_HEADERS = ['판매가', '모델명', '바코드', '시중가'] as const
 const BARCODE_VPS_PREFIX = 'VPS / '
 const PRICE_UNDERCUT = 10
 
@@ -19,9 +19,17 @@ const PRICE_CHANGE_THRESHOLD = 0.1
 const FILL_GREEN_ARGB = 'FFC6EFCE'
 const FILL_RED_ARGB = 'FFFFC7CE'
 
-// 판매가 오른쪽에 추가하는 "판매가 x 1.2" 컬럼.
-const MULTIPLIER_HEADER = '*1.2'
-const PRICE_MULTIPLIER = 1.2
+// 판매가 오른쪽에 추가하는 "시중가 x 배수" 컬럼들(헤더/배수, 순서 그대로 유지).
+const MARKET_PRICE_MULTIPLIERS: { header: string; factor: number }[] = [
+  { header: '*1.165', factor: 1.165 },
+  { header: '*1.205', factor: 1.205 },
+  { header: '*1.23', factor: 1.23 },
+  { header: '*1.27', factor: 1.27 },
+  { header: '*1.245', factor: 1.245 },
+  { header: '*1.285', factor: 1.285 },
+  { header: '*1.31', factor: 1.31 },
+  { header: '*1.35', factor: 1.35 },
+]
 
 // 자사(우리) 판매자. 모델별 최저가 판매자가 자사면 언더컷(-10)하지 않고 최저가 그대로 둔다.
 const SELF_SELLERS = new Set<string>([SELLER_KEYANG, SELLER_H1, '흥원닷컴'])
@@ -102,13 +110,14 @@ async function buildV2Result(input: V2CalculationInput) {
   const priceCol = headers['판매가']
   const modelCol = headers['모델명']
   const barcodeCol = headers['바코드']
+  const marketPriceCol = headers['시중가']
 
   let matchedCount = 0
   let unmatchedCount = 0
   let totalDataRows = 0
   let lastRowNumber = 1
-  // 판매가 셀의 숫자서식(콤마 등). *1.2 컬럼에 동일하게 적용한다.
-  let priceNumFmt: string | undefined
+  // 시중가 셀의 숫자서식(콤마 등). 배수 컬럼들에 동일하게 적용한다.
+  let marketPriceNumFmt: string | undefined
 
   worksheet.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return
@@ -119,9 +128,9 @@ async function buildV2Result(input: V2CalculationInput) {
     // 바코드 보정은 모든 데이터 행에 적용한다(매칭 여부와 무관).
     prefixBarcodeCell(row.getCell(barcodeCol))
 
-    if (priceNumFmt === undefined) {
-      const fmt = row.getCell(priceCol).numFmt
-      if (fmt) priceNumFmt = fmt
+    if (marketPriceNumFmt === undefined) {
+      const fmt = row.getCell(marketPriceCol).numFmt
+      if (fmt) marketPriceNumFmt = fmt
     }
 
     const modelNorm = normModel(cellText(row.getCell(modelCol)))
@@ -165,9 +174,9 @@ async function buildV2Result(input: V2CalculationInput) {
     matchedCount++
   })
 
-  // *1.2 컬럼 삽입은 모든 per-row 처리(판매가 set/색칠/바코드)가 끝난 뒤 마지막에 한다.
-  // (컬럼 삽입은 priceCol 이후 인덱스를 +1 밀어버리므로.)
-  insertMultiplierColumn(worksheet, priceCol, lastRowNumber, priceNumFmt)
+  // 시중가x배수 8개 컬럼 삽입은 모든 per-row 처리(판매가 set/색칠/바코드)가 끝난 뒤 마지막에 한다.
+  // (컬럼 삽입은 priceCol 이후 인덱스를 +8 밀어버리므로, 시중가 값은 삽입 전 인덱스로 읽는다.)
+  insertMarketPriceMultiplierColumns(worksheet, priceCol, marketPriceCol, lastRowNumber, marketPriceNumFmt)
 
   const buffer = await workbook.xlsx.writeBuffer()
   const dateStr = input.requestedAt.toISOString().split('T')[0]
@@ -262,35 +271,45 @@ function detachCellStyle(cell: ExcelJS.Cell): void {
   cell.style = JSON.parse(JSON.stringify(cell.style ?? {}))
 }
 
-// 판매가(priceCol) 바로 오른쪽에 "*1.2" 컬럼을 삽입한다.
-// 값 = 해당 행 최종 판매가 x 1.2 (정수 반올림). 판매가가 비었거나 숫자 아니면 빈칸.
-// spliceColumns 로 한 번에 삽입(priceCol 이후 컬럼들은 +1 밀린다).
-function insertMultiplierColumn(
+// 판매가(priceCol) 바로 오른쪽에 "시중가 x 배수" 8개 컬럼을 순서대로 삽입한다.
+// 각 셀 값 = 해당 행 시중가 x 배수 (정수 반올림). 시중가가 비었거나 숫자 아니면 빈칸.
+// 모든 데이터 행 대상(매칭 여부 무관). 시중가 값은 삽입 전 인덱스로 미리 읽어둔다.
+function insertMarketPriceMultiplierColumns(
   worksheet: ExcelJS.Worksheet,
   priceCol: number,
+  marketPriceCol: number,
   lastRowNumber: number,
-  priceNumFmt: string | undefined
+  marketPriceNumFmt: string | undefined
 ): void {
-  // columnArray[0] = 헤더, 이후 각 데이터 행(2..lastRowNumber) 값(행 순서대로).
-  const columnArray: (string | number | null)[] = [MULTIPLIER_HEADER]
-
+  // 삽입 "전" 인덱스로 행별 시중가를 먼저 읽는다(삽입하면 시중가 컬럼이 +8 밀리므로).
+  const marketPrices: (number | null)[] = []
   for (let rowNumber = 2; rowNumber <= lastRowNumber; rowNumber++) {
-    const priceValue = parsePriceNumber(cellText(worksheet.getRow(rowNumber).getCell(priceCol)))
-    columnArray.push(priceValue === null ? null : Math.round(priceValue * PRICE_MULTIPLIER))
+    marketPrices.push(parsePriceNumber(cellText(worksheet.getRow(rowNumber).getCell(marketPriceCol))))
   }
 
-  // priceCol 바로 다음 위치에 0개 삭제 + columnArray 1열 삽입.
-  worksheet.spliceColumns(priceCol + 1, 0, columnArray)
+  // 배수별 컬럼 배열: [헤더, ...행별값]. 순서는 MARKET_PRICE_MULTIPLIERS 그대로.
+  const columnArrays = MARKET_PRICE_MULTIPLIERS.map(({ header, factor }) => {
+    const columnArray: (string | number | null)[] = [header]
+    for (const marketPrice of marketPrices) {
+      columnArray.push(marketPrice === null ? null : Math.round(marketPrice * factor))
+    }
+    return columnArray
+  })
 
-  // 삽입된 컬럼의 숫자서식을 판매가와 동일하게(콤마 등) 적용한다.
-  // 단 판매가 서식이 텍스트('@')면 숫자를 텍스트로 강제하게 되므로 적용하지 않고 일반 숫자로 둔다.
-  const isNumericFmt = !!priceNumFmt && /[#0]/.test(priceNumFmt)
-  if (isNumericFmt && priceNumFmt) {
-    const newCol = priceCol + 1
-    for (let rowNumber = 2; rowNumber <= lastRowNumber; rowNumber++) {
-      const cell = worksheet.getRow(rowNumber).getCell(newCol)
-      if (cell.value !== null && cell.value !== undefined && cell.value !== '') {
-        cell.numFmt = priceNumFmt
+  // priceCol 바로 다음 위치에 0개 삭제 + 8개 컬럼을 순서대로 삽입.
+  worksheet.spliceColumns(priceCol + 1, 0, ...columnArrays)
+
+  // 삽입된 컬럼들의 숫자서식을 시중가와 동일하게(콤마 등) 적용한다.
+  // 단 서식이 텍스트('@')면 숫자를 텍스트로 강제하게 되므로 적용하지 않고 일반 숫자로 둔다.
+  const isNumericFmt = !!marketPriceNumFmt && /[#0]/.test(marketPriceNumFmt)
+  if (isNumericFmt && marketPriceNumFmt) {
+    for (let offset = 0; offset < columnArrays.length; offset++) {
+      const newCol = priceCol + 1 + offset
+      for (let rowNumber = 2; rowNumber <= lastRowNumber; rowNumber++) {
+        const cell = worksheet.getRow(rowNumber).getCell(newCol)
+        if (cell.value !== null && cell.value !== undefined && cell.value !== '') {
+          cell.numFmt = marketPriceNumFmt
+        }
       }
     }
   }
