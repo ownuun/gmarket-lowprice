@@ -305,7 +305,10 @@ async function buildSlaveWorkbook(slaveFile: File, products: SlaveProduct[]): Pr
     worksheet.spliceRows(rowNumber, 1)
   }
 
+  const blockSize = accountRows.length
+
   // 상품 x 계정 블록 펼치기.
+  let dataRowIndex = 0 // 추가된 데이터 행 카운터(1부터)
   for (const product of products) {
     for (const template of accountRows) {
       const rowValues: (string | number | null)[] = []
@@ -317,9 +320,24 @@ async function buildSlaveWorkbook(slaveFile: File, products: SlaveProduct[]): Pr
       rowValues[productNameCol] = product.productName
       rowValues[priceCol] = product.finalPrice === null ? '' : product.finalPrice
       rowValues[barcodeCol] = '' // 바코드는 비움
-      worksheet.addRow(rowValues.slice(1))
+      const addedRow = worksheet.addRow(rowValues.slice(1))
+      dataRowIndex++
+
+      // 상품 블록의 마지막 행(다음 상품과의 경계)에 아래쪽 굵은 테두리(상품 구분선).
+      if (dataRowIndex % blockSize === 0) {
+        for (let colNumber = 1; colNumber <= columnCount; colNumber++) {
+          const cell = addedRow.getCell(colNumber)
+          cell.border = {
+            ...(cell.border ?? {}),
+            bottom: { style: 'medium', color: { argb: 'FF000000' } },
+          }
+        }
+      }
     }
   }
+
+  // 온라인 상품명 컬럼은 길어서 너비를 넓힌다.
+  worksheet.getColumn(productNameCol).width = 55
 
   const buffer = await workbook.xlsx.writeBuffer()
   return Buffer.from(buffer)
