@@ -64,7 +64,7 @@ const formatLogTime = (iso: string) => {
 }
 
 const getDownloadFileName = (response: Response, isV2: boolean) => {
-  const fallback = `가격계산${isV2 ? '_v2' : ''}_${new Date().toISOString().split('T')[0]}${isV2 ? '.xlsx' : '.zip'}`
+  const fallback = `가격계산${isV2 ? '_v2' : ''}_${new Date().toISOString().split('T')[0]}.zip`
   const disposition = response.headers.get('Content-Disposition')
   const match = disposition?.match(/filename="?([^";]+)"?/)
   if (!match?.[1]) return fallback
@@ -89,6 +89,7 @@ export default function DashboardPage() {
   const [playautoFile, setPlayautoFile] = useState<File | null>(null)
   const [templateFile, setTemplateFile] = useState<File | null>(null)
   const [gmarketFile, setGmarketFile] = useState<File | null>(null)
+  const [slaveFile, setSlaveFile] = useState<File | null>(null)
   const [selectedJobId, setSelectedJobId] = useState<string>('')
   const [gmarketSource, setGmarketSource] = useState<'job' | 'file'>('file')
   const [priceCalcVersion, setPriceCalcVersion] = useState<PriceCalcVersion>('v2')
@@ -106,6 +107,7 @@ export default function DashboardPage() {
   const playautoInputRef = useRef<HTMLInputElement>(null)
   const templateInputRef = useRef<HTMLInputElement>(null)
   const gmarketInputRef = useRef<HTMLInputElement>(null)
+  const slaveInputRef = useRef<HTMLInputElement>(null)
 
   // 드래그앤드롭으로 강조 중인 박스 키 (박스별로 구분)
   const [dragActiveKey, setDragActiveKey] = useState<string | null>(null)
@@ -156,6 +158,7 @@ export default function DashboardPage() {
       setPlayautoFile(null)
       setTemplateFile(null)
       setGmarketFile(null)
+      setSlaveFile(null)
       setSelectedJobId('')
       setPriceCalcVersion('v2')
       setCalcResult(null)
@@ -163,6 +166,7 @@ export default function DashboardPage() {
       if (playautoInputRef.current) playautoInputRef.current.value = ''
       if (templateInputRef.current) templateInputRef.current.value = ''
       if (gmarketInputRef.current) gmarketInputRef.current.value = ''
+      if (slaveInputRef.current) slaveInputRef.current.value = ''
     }
   }, [mainTab])
 
@@ -362,6 +366,11 @@ export default function DashboardPage() {
       return
     }
 
+    if (isV2PriceCalc && !slaveFile) {
+      setCalcError('슬레이브 양식 엑셀 파일을 업로드해주세요.')
+      return
+    }
+
     if (!isV2PriceCalc && !templateFile) {
       setCalcError('템플릿 엑셀 파일을 선택해주세요.')
       return
@@ -385,6 +394,9 @@ export default function DashboardPage() {
       formData.append('playauto', playautoFile)
       if (isV2PriceCalc && gmarketFile) {
         formData.append('gmarket', gmarketFile)
+      }
+      if (isV2PriceCalc && slaveFile) {
+        formData.append('slave', slaveFile)
       }
       if (!isV2PriceCalc && templateFile) {
         formData.append('template', templateFile)
@@ -685,7 +697,11 @@ export default function DashboardPage() {
                   <div className="grid gap-2 sm:grid-cols-2">
                     <button
                       type="button"
-                      onClick={() => setPriceCalcVersion('v1')}
+                      onClick={() => {
+                        setPriceCalcVersion('v1')
+                        setSlaveFile(null)
+                        if (slaveInputRef.current) slaveInputRef.current.value = ''
+                      }}
                       className={`rounded-md border p-3 text-left transition-colors ${
                         priceCalcVersion === 'v1'
                           ? 'border-primary bg-background shadow-sm'
@@ -793,6 +809,50 @@ export default function DashboardPage() {
                         onClick={() => {
                           setGmarketFile(null)
                           if (gmarketInputRef.current) gmarketInputRef.current.value = ''
+                        }}
+                      >
+                        ✕
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                )}
+
+                {isV2PriceCalc && (
+                <div
+                  {...createDropHandlers('slave', setSlaveFile, slaveInputRef)}
+                  className={`p-4 rounded-lg border-2 transition-colors ${dragActiveKey === 'slave' ? 'border-primary bg-primary/5 ring-2 ring-primary/30' : slaveFile ? 'border-green-500 bg-green-50/50' : 'border-dashed border-muted-foreground/25 bg-muted/30'}`}
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold ${slaveFile ? 'bg-green-500 text-white' : 'bg-muted-foreground/20 text-muted-foreground'}`}>3</div>
+                    <Label className="text-base font-semibold">슬레이브 양식 엑셀</Label>
+                    {slaveFile && <span className="text-green-600 text-sm">✓</span>}
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-3">쇼핑몰계정 업로드 양식 (판매자관리코드, 쇼핑몰(계정), 온라인 상품명, 판매가, 바코드). 상품마다 계정 블록을 반복 채워 결과 ZIP에 포함됩니다.</p>
+                  <input
+                    ref={slaveInputRef}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={(e) => setSlaveFile(e.target.files?.[0] || null)}
+                    className="hidden"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1 justify-start font-normal"
+                      onClick={() => slaveInputRef.current?.click()}
+                    >
+                      {slaveFile ? slaveFile.name : '파일 선택...'}
+                    </Button>
+                    {slaveFile && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setSlaveFile(null)
+                          if (slaveInputRef.current) slaveInputRef.current.value = ''
                         }}
                       >
                         ✕
@@ -957,14 +1017,14 @@ export default function DashboardPage() {
 
                 {calcResult && (
                   <div className="p-3 bg-green-50 border border-green-200 rounded-md text-green-700 text-sm space-y-1">
-                    <div>{isV2PriceCalc ? '엑셀 파일 다운로드 완료!' : 'ZIP 파일 다운로드 완료!'}</div>
+                    <div>ZIP 파일 다운로드 완료!</div>
                     <div>
                       {isV2PriceCalc
                         ? `- 판매가 갱신: ${calcResult.matched}개 / 미매칭: ${calcResult.unmatched}개`
                         : `- 가격 매칭: 매칭 ${calcResult.matched}개 / 미매칭 ${calcResult.unmatched}개`}
                     </div>
                     {isV2PriceCalc ? (
-                      <div>- 처리한 데이터 행: {calcResult.vpsKept}행</div>
+                      <div>- ZIP: 쇼핑몰상품 + 슬레이브양식 ({calcResult.vpsKept}개 상품)</div>
                     ) : (
                       <div>- VPS: {calcResult.vpsKept}행 유지 / {calcResult.vpsRemoved}행 제거</div>
                     )}
@@ -977,6 +1037,7 @@ export default function DashboardPage() {
                     calcLoading ||
                     !playautoFile ||
                     (isV2PriceCalc && !gmarketFile) ||
+                    (isV2PriceCalc && !slaveFile) ||
                     (!isV2PriceCalc && !templateFile) ||
                     (!isV2PriceCalc && gmarketSource === 'job' && !selectedJobId) ||
                     (!isV2PriceCalc && gmarketSource === 'file' && !gmarketFile)

@@ -28,6 +28,7 @@ export async function POST(request: Request) {
       templateFile: getFile(formData, 'template'),
       jobId: getString(formData, 'jobId'),
       gmarketFile: getFile(formData, 'gmarket'),
+      slaveFile: getFile(formData, 'slave'),
     }
 
     const validationError = plugin.validate(files)

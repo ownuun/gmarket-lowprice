@@ -7,6 +7,7 @@ export interface PriceCalcFiles {
   templateFile: File | null
   jobId: string | null
   gmarketFile: File | null
+  slaveFile: File | null
 }
 
 export interface PriceCalcContext {
@@ -45,6 +46,7 @@ export interface PriceCalcResult extends PriceCalcMetrics {
 export interface PriceCalcInputPolicy {
   requiresPlayauto: boolean
   requiresTemplate: boolean
+  requiresSlave: boolean
   gmarketSource: 'job-or-file' | 'file' | 'none'
 }
 

@@ -54,6 +54,7 @@ interface CompatibleCalculationInput {
 export const COMPATIBLE_INPUT_POLICY = {
   requiresPlayauto: true,
   requiresTemplate: true,
+  requiresSlave: false,
   gmarketSource: 'job-or-file' as const,
 }
 

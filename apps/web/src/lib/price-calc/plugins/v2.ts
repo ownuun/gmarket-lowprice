@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs'
+import JSZip from 'jszip'
 import { normModel, SELLER_KEYANG, SELLER_H1, type GmarketIndex } from '../../price-calculator'
 import { type PriceCalcFiles, type PriceCalcPlugin, PriceCalcRequestError } from '../types'
 import { loadGmarketIndexFromExcelFile } from './shared'
@@ -6,6 +7,7 @@ import { loadGmarketIndexFromExcelFile } from './shared'
 const V2_INPUT_POLICY = {
   requiresPlayauto: true,
   requiresTemplate: false,
+  requiresSlave: true,
   gmarketSource: 'file' as const,
 }
 
@@ -41,7 +43,7 @@ export const v2PriceCalcPlugin: PriceCalcPlugin = {
   inputPolicy: V2_INPUT_POLICY,
   validate: validateV2Input,
   async calculate(context) {
-    const { playautoFile, gmarketFile } = getRequiredV2Files(context.files)
+    const { playautoFile, gmarketFile, slaveFile } = getRequiredV2Files(context.files)
 
     const { index: gmarketIndex } = await loadGmarketIndexFromExcelFile(gmarketFile)
 
@@ -49,6 +51,7 @@ export const v2PriceCalcPlugin: PriceCalcPlugin = {
       userId: context.userId,
       playautoFile,
       gmarketFile,
+      slaveFile,
       gmarketIndex,
       requestedAt: context.requestedAt,
     })
@@ -64,22 +67,31 @@ function validateV2Input(files: PriceCalcFiles): string | null {
     return '올윈크롤 엑셀 파일이 필요합니다.'
   }
 
+  if (!files.slaveFile) {
+    return '슬레이브 양식 엑셀 파일이 필요합니다.'
+  }
+
   return null
 }
 
-function getRequiredV2Files(files: PriceCalcFiles): { playautoFile: File; gmarketFile: File } {
+function getRequiredV2Files(files: PriceCalcFiles): {
+  playautoFile: File
+  gmarketFile: File
+  slaveFile: File
+} {
   const error = validateV2Input(files)
   if (error) {
     throw new PriceCalcRequestError(error, 400)
   }
 
-  if (!files.playautoFile || !files.gmarketFile) {
+  if (!files.playautoFile || !files.gmarketFile || !files.slaveFile) {
     throw new PriceCalcRequestError('가격 계산에 필요한 파일이 누락되었습니다.', 400)
   }
 
   return {
     playautoFile: files.playautoFile,
     gmarketFile: files.gmarketFile,
+    slaveFile: files.slaveFile,
   }
 }
 
@@ -87,6 +99,7 @@ interface V2CalculationInput {
   userId: string
   playautoFile: File
   gmarketFile: File
+  slaveFile: File
   gmarketIndex: GmarketIndex
   requestedAt: Date
 }
@@ -111,6 +124,8 @@ async function buildV2Result(input: V2CalculationInput) {
   const modelCol = headers['모델명']
   const barcodeCol = headers['바코드']
   const marketPriceCol = headers['시중가']
+  const sellerCodeCol = headers['판매자관리코드']
+  const productNameCol = headers['온라인 상품명']
 
   let matchedCount = 0
   let unmatchedCount = 0
@@ -118,6 +133,8 @@ async function buildV2Result(input: V2CalculationInput) {
   let lastRowNumber = 1
   // 시중가 셀의 숫자서식(콤마 등). 배수 컬럼들에 동일하게 적용한다.
   let marketPriceNumFmt: string | undefined
+  // 슬레이브 양식 채우기에 쓸 상품별 정보(플토 데이터 행 순서대로).
+  const products: SlaveProduct[] = []
 
   worksheet.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return
@@ -133,21 +150,30 @@ async function buildV2Result(input: V2CalculationInput) {
       if (fmt) marketPriceNumFmt = fmt
     }
 
+    // 상품 메타(슬레이브용). 최종 판매가는 아래에서 결정한 뒤 기록한다.
+    const sellerCode = sellerCodeCol ? cellText(row.getCell(sellerCodeCol)).trim() : ''
+    const productName = productNameCol ? cellText(row.getCell(productNameCol)).trim() : ''
+    const recordProduct = (finalPrice: number | null) => {
+      products.push({ sellerCode, productName, finalPrice })
+    }
+
     const modelNorm = normModel(cellText(row.getCell(modelCol)))
     if (!modelNorm) {
       unmatchedCount++
+      recordProduct(parsePriceNumber(cellText(row.getCell(priceCol))))
       return
     }
 
     const recs = input.gmarketIndex[modelNorm]
     if (!recs || recs.length === 0) {
       unmatchedCount++
+      recordProduct(parsePriceNumber(cellText(row.getCell(priceCol))))
       return
     }
 
     const lowest = Math.min(...recs.map((rec) => rec.price))
 
-    // 자사 단독 최저 분기: 최저가 record가 "전부" 자사 판매자일 때만 언더컷하지 않고 그대로 둔다.
+    // 자사 단독 최저 분기: 최저가 record가 "전부" 자사 판매자일 때만 언더컷하지 않고 최저가 그대로 둔다.
     // 최저가에 경쟁사가 한 명이라도 끼면 -10 한다. (lowestRecs는 recs.length>0 이므로 항상 비어있지 않음.)
     const lowestRecs = recs.filter((rec) => rec.price === lowest)
     const isOursOnly = lowestRecs.every((rec) => SELF_SELLERS.has(rec.seller.trim()))
@@ -159,6 +185,7 @@ async function buildV2Result(input: V2CalculationInput) {
         `[price-calc v2] 모델 ${modelNorm}: 갱신가(${newPrice}) <= 0 이므로 판매가를 유지합니다.`
       )
       unmatchedCount++
+      recordProduct(parsePriceNumber(cellText(row.getCell(priceCol))))
       return
     }
 
@@ -172,14 +199,26 @@ async function buildV2Result(input: V2CalculationInput) {
     applyPriceChangeFill(priceCell, oldPrice, newPrice)
 
     matchedCount++
+    recordProduct(newPrice)
   })
 
   // 시중가x배수 8개 컬럼 삽입은 모든 per-row 처리(판매가 set/색칠/바코드)가 끝난 뒤 마지막에 한다.
   // (컬럼 삽입은 priceCol 이후 인덱스를 +8 밀어버리므로, 시중가 값은 삽입 전 인덱스로 읽는다.)
   insertMarketPriceMultiplierColumns(worksheet, priceCol, marketPriceCol, lastRowNumber, marketPriceNumFmt)
 
-  const buffer = await workbook.xlsx.writeBuffer()
+  // 1) 쇼핑몰상품 결과 워크북(배수컬럼/색칠/바코드VPS 포함) 버퍼.
+  const shoppingMallBuffer = await workbook.xlsx.writeBuffer()
+
+  // 2) 슬레이브 양식 워크북: 상품마다 계정 블록을 반복 채운다.
+  const slaveBuffer = await buildSlaveWorkbook(input.slaveFile, products)
+
+  // 3) 두 파일을 ZIP으로 묶는다(v1과 동일한 jszip).
   const dateStr = input.requestedAt.toISOString().split('T')[0]
+  const zip = new JSZip()
+  zip.file(`쇼핑몰상품_${dateStr}.xlsx`, shoppingMallBuffer)
+  zip.file(`슬레이브양식_${dateStr}.xlsx`, slaveBuffer)
+  const zipBuffer = await zip.generateAsync({ type: 'arraybuffer' })
+
   const metrics = {
     matchedCount,
     unmatchedCount,
@@ -190,9 +229,9 @@ async function buildV2Result(input: V2CalculationInput) {
 
   return {
     version: 'v2' as const,
-    bodyBuffer: buffer,
-    downloadFileName: `가격계산_v2_${dateStr}.xlsx`,
-    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    bodyBuffer: zipBuffer,
+    downloadFileName: `가격계산_v2_${dateStr}.zip`,
+    contentType: 'application/zip',
     history: {
       user_id: input.userId,
       playauto_filename: input.playautoFile.name,
@@ -205,6 +244,85 @@ async function buildV2Result(input: V2CalculationInput) {
     },
     ...metrics,
   }
+}
+
+interface SlaveProduct {
+  sellerCode: string
+  productName: string
+  finalPrice: number | null
+}
+
+const SLAVE_REQUIRED_HEADERS = ['판매자관리코드', '쇼핑몰(계정)', '온라인 상품명', '판매가', '바코드'] as const
+
+// 슬레이브 양식 워크북 생성.
+// 업로드된 슬레이브 템플릿(첫 시트)의 "계정 블록"(쇼핑몰(계정)이 채워진 데이터 행들)을
+// 플토 상품마다 통째로 복제해 채운다. 출력 행 수 = 상품수 x 계정행수.
+async function buildSlaveWorkbook(slaveFile: File, products: SlaveProduct[]): Promise<Buffer> {
+  const slaveBuffer = await slaveFile.arrayBuffer()
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.load(slaveBuffer)
+
+  const worksheet = workbook.worksheets[0]
+  if (!worksheet) {
+    throw new PriceCalcRequestError('슬레이브 양식 엑셀에 시트가 없습니다.', 400)
+  }
+
+  const headers = headerMap(worksheet)
+  const missing = SLAVE_REQUIRED_HEADERS.filter((header) => !headers[header])
+  if (missing.length > 0) {
+    throw new PriceCalcRequestError(`슬레이브 양식에 필수 컬럼 누락: ${missing.join(', ')}`, 400)
+  }
+
+  const accountCol = headers['쇼핑몰(계정)']
+  const sellerCodeCol = headers['판매자관리코드']
+  const productNameCol = headers['온라인 상품명']
+  const priceCol = headers['판매가']
+  const barcodeCol = headers['바코드']
+
+  // 템플릿의 계정 블록: 2행~끝 중 쇼핑몰(계정)이 비어있지 않은 행들을 그대로 보관.
+  const accountRows: Record<number, string>[] = []
+  worksheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return
+    const account = cellText(row.getCell(accountCol)).trim()
+    if (!account) return
+
+    const values: Record<number, string> = {}
+    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      values[colNumber] = cellText(cell)
+    })
+    values[accountCol] = account
+    accountRows.push(values)
+  })
+
+  if (accountRows.length === 0) {
+    throw new PriceCalcRequestError('슬레이브 양식에 계정 행이 없습니다.', 400)
+  }
+
+  const columnCount = worksheet.columnCount
+
+  // 기존 데이터 행 제거(헤더만 남김). 뒤에서부터 삭제해 인덱스 안 꼬임.
+  for (let rowNumber = worksheet.rowCount; rowNumber >= 2; rowNumber--) {
+    worksheet.spliceRows(rowNumber, 1)
+  }
+
+  // 상품 x 계정 블록 펼치기.
+  for (const product of products) {
+    for (const template of accountRows) {
+      const rowValues: (string | number | null)[] = []
+      for (let colNumber = 1; colNumber <= columnCount; colNumber++) {
+        rowValues[colNumber] = template[colNumber] ?? ''
+      }
+      // 상품별 값 덮어쓰기.
+      rowValues[sellerCodeCol] = product.sellerCode
+      rowValues[productNameCol] = product.productName
+      rowValues[priceCol] = product.finalPrice === null ? '' : product.finalPrice
+      rowValues[barcodeCol] = '' // 바코드는 비움
+      worksheet.addRow(rowValues.slice(1))
+    }
+  }
+
+  const buffer = await workbook.xlsx.writeBuffer()
+  return Buffer.from(buffer)
 }
 
 function prefixBarcodeCell(cell: ExcelJS.Cell): void {
