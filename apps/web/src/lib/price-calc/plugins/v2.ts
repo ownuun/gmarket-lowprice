@@ -19,6 +19,10 @@ const PRICE_CHANGE_THRESHOLD = 0.1
 const FILL_GREEN_ARGB = 'FFC6EFCE'
 const FILL_RED_ARGB = 'FFFFC7CE'
 
+// 판매가 오른쪽에 추가하는 "판매가 x 1.2" 컬럼.
+const MULTIPLIER_HEADER = '*1.2'
+const PRICE_MULTIPLIER = 1.2
+
 // 자사(우리) 판매자. 모델별 최저가 판매자가 자사면 언더컷(-10)하지 않고 최저가 그대로 둔다.
 const SELF_SELLERS = new Set<string>([SELLER_KEYANG, SELLER_H1, '흥원닷컴'])
 
@@ -102,14 +106,23 @@ async function buildV2Result(input: V2CalculationInput) {
   let matchedCount = 0
   let unmatchedCount = 0
   let totalDataRows = 0
+  let lastRowNumber = 1
+  // 판매가 셀의 숫자서식(콤마 등). *1.2 컬럼에 동일하게 적용한다.
+  let priceNumFmt: string | undefined
 
   worksheet.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return
 
     totalDataRows++
+    lastRowNumber = rowNumber
 
     // 바코드 보정은 모든 데이터 행에 적용한다(매칭 여부와 무관).
     prefixBarcodeCell(row.getCell(barcodeCol))
+
+    if (priceNumFmt === undefined) {
+      const fmt = row.getCell(priceCol).numFmt
+      if (fmt) priceNumFmt = fmt
+    }
 
     const modelNorm = normModel(cellText(row.getCell(modelCol)))
     if (!modelNorm) {
@@ -151,6 +164,10 @@ async function buildV2Result(input: V2CalculationInput) {
 
     matchedCount++
   })
+
+  // *1.2 컬럼 삽입은 모든 per-row 처리(판매가 set/색칠/바코드)가 끝난 뒤 마지막에 한다.
+  // (컬럼 삽입은 priceCol 이후 인덱스를 +1 밀어버리므로.)
+  insertMultiplierColumn(worksheet, priceCol, lastRowNumber, priceNumFmt)
 
   const buffer = await workbook.xlsx.writeBuffer()
   const dateStr = input.requestedAt.toISOString().split('T')[0]
@@ -243,6 +260,40 @@ function clearFill(cell: ExcelJS.Cell): void {
 // 자기만의 style 객체를 갖게 만든다.
 function detachCellStyle(cell: ExcelJS.Cell): void {
   cell.style = JSON.parse(JSON.stringify(cell.style ?? {}))
+}
+
+// 판매가(priceCol) 바로 오른쪽에 "*1.2" 컬럼을 삽입한다.
+// 값 = 해당 행 최종 판매가 x 1.2 (정수 반올림). 판매가가 비었거나 숫자 아니면 빈칸.
+// spliceColumns 로 한 번에 삽입(priceCol 이후 컬럼들은 +1 밀린다).
+function insertMultiplierColumn(
+  worksheet: ExcelJS.Worksheet,
+  priceCol: number,
+  lastRowNumber: number,
+  priceNumFmt: string | undefined
+): void {
+  // columnArray[0] = 헤더, 이후 각 데이터 행(2..lastRowNumber) 값(행 순서대로).
+  const columnArray: (string | number | null)[] = [MULTIPLIER_HEADER]
+
+  for (let rowNumber = 2; rowNumber <= lastRowNumber; rowNumber++) {
+    const priceValue = parsePriceNumber(cellText(worksheet.getRow(rowNumber).getCell(priceCol)))
+    columnArray.push(priceValue === null ? null : Math.round(priceValue * PRICE_MULTIPLIER))
+  }
+
+  // priceCol 바로 다음 위치에 0개 삭제 + columnArray 1열 삽입.
+  worksheet.spliceColumns(priceCol + 1, 0, columnArray)
+
+  // 삽입된 컬럼의 숫자서식을 판매가와 동일하게(콤마 등) 적용한다.
+  // 단 판매가 서식이 텍스트('@')면 숫자를 텍스트로 강제하게 되므로 적용하지 않고 일반 숫자로 둔다.
+  const isNumericFmt = !!priceNumFmt && /[#0]/.test(priceNumFmt)
+  if (isNumericFmt && priceNumFmt) {
+    const newCol = priceCol + 1
+    for (let rowNumber = 2; rowNumber <= lastRowNumber; rowNumber++) {
+      const cell = worksheet.getRow(rowNumber).getCell(newCol)
+      if (cell.value !== null && cell.value !== undefined && cell.value !== '') {
+        cell.numFmt = priceNumFmt
+      }
+    }
+  }
 }
 
 function headerMap(worksheet: ExcelJS.Worksheet): Record<string, number> {
