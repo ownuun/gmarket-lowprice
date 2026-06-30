@@ -29,6 +29,22 @@ PORT = int(os.environ.get("COUPANG_SERVICE_PORT", "8917"))
 HEADLESS = os.environ.get("COUPANG_HEADLESS", "true").lower() != "false"
 LAUNCH_ARGS = ["--no-sandbox"] if os.environ.get("COUPANG_NO_SANDBOX", "").lower() == "true" else []
 
+
+def _build_proxy():
+    host = os.environ.get("PROXY_HOST", "")
+    if not host:
+        return None
+    port = os.environ.get("PROXY_PORT", "823")
+    proxy = {"server": f"http://{host}:{port}"}
+    user = os.environ.get("PROXY_USERNAME", "")
+    if user:
+        proxy["username"] = user
+        proxy["password"] = os.environ.get("PROXY_PASSWORD", "")
+    return proxy
+
+
+PROXY = _build_proxy()
+
 # Coupang 검색결과의 실제 상품은 /vp/products/<id> 링크에 있다.
 # 앵커 텍스트(상품명+가격+배송)에서 가격을 정규식으로 뽑고 productId로 중복 제거한다.
 EXTRACT_JS = r"""() => {
@@ -80,6 +96,7 @@ class CoupangBrowser:
             locale="ko-KR",
             timezone="Asia/Seoul",
             args=LAUNCH_ARGS or None,
+            proxy=PROXY,
         )
         # 검색 전 메인페이지를 한 번 방문해 Akamai 센서 쿠키를 세팅(워밍업).
         page = await self._ctx.new_page()
@@ -132,7 +149,7 @@ def main():
     app = web.Application()
     app.router.add_get("/search", handle_search)
     app.router.add_get("/health", handle_health)
-    print(f"[coupang-service] listening on {HOST}:{PORT} headless={HEADLESS}", flush=True)
+    print(f"[coupang-service] listening on {HOST}:{PORT} headless={HEADLESS} proxy={'on' if PROXY else 'off'}", flush=True)
     web.run_app(app, host=HOST, port=PORT, print=None)
 
 

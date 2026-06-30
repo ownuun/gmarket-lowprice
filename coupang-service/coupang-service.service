@@ -6,6 +6,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/root/gmarket-lowprice/coupang-service
+EnvironmentFile=/root/gmarket-lowprice/.env
 ExecStart=/root/gmarket-lowprice/coupang-service/.venv/bin/python /root/gmarket-lowprice/coupang-service/coupang_service.py
 Restart=always
 RestartSec=10
