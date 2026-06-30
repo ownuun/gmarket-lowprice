@@ -18,6 +18,7 @@ Env:   COUPANG_SERVICE_HOST, COUPANG_SERVICE_PORT, COUPANG_HEADLESS=true|false
 """
 import asyncio
 import os
+import secrets
 import urllib.parse
 
 from aiohttp import web
@@ -38,7 +39,8 @@ def _build_proxy():
     proxy = {"server": f"http://{host}:{port}"}
     user = os.environ.get("PROXY_USERNAME", "")
     if user:
-        proxy["username"] = user
+        sessid = secrets.token_hex(6)
+        proxy["username"] = f"{user}__cr.kr;sessid.{sessid}"
         proxy["password"] = os.environ.get("PROXY_PASSWORD", "")
     return proxy
 
