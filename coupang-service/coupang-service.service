@@ -1,0 +1,18 @@
+[Unit]
+Description=Coupang Search Sidecar (CloakBrowser stealth Chromium)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/gmarket-lowprice/coupang-service
+ExecStart=/root/gmarket-lowprice/coupang-service/.venv/bin/python /root/gmarket-lowprice/coupang-service/coupang_service.py
+Restart=always
+RestartSec=10
+Environment=COUPANG_HEADLESS=true
+Environment=COUPANG_NO_SANDBOX=true
+Environment=COUPANG_SERVICE_HOST=127.0.0.1
+Environment=COUPANG_SERVICE_PORT=8917
+
+[Install]
+WantedBy=multi-user.target

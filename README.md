@@ -135,4 +135,63 @@ sudo systemctl start gmarket-worker
 
 - **웹앱**: Vercel
 - **DB**: Supabase
-- **크롤러**: iwinv VPS
+- **크롤러(G마켓)**: iwinv VPS (Node 워커, Playwright)
+- **쿠팡 검색**: CloakBrowser 사이드카 (같은 VPS, `127.0.0.1:8917`)
+
+---
+
+## 쿠팡 사이드카 서비스 (CloakBrowser)
+
+쿠팡은 Akamai Bot Manager로 보호돼 일반 크롤(Playwright stealth / curl_cffi)이 전부 차단된다. 그래서 쿠팡 검색은 **CloakBrowser**(소스레벨 C++ 지문패치 스텔스 Chromium)를 구동하는 Python 사이드카가 담당한다. Node 워커는 `job.marketplace === 'coupang'`일 때만 이 로컬 HTTP 서비스(`GET /search?q=`)를 호출하고, G마켓 경로는 기존 그대로다.
+
+> DB: 이 기능은 마이그레이션 `supabase/migrations/007_add_marketplace.sql`(jobs.marketplace 컬럼) 적용이 선행돼야 한다.
+
+### 최초 설치 (VPS)
+
+```bash
+cd /root/gmarket-lowprice/coupang-service
+
+# Python 3.11+ 가상환경 + 의존성
+python3 -m venv .venv
+.venv/bin/pip install -U pip
+.venv/bin/pip install -r requirements.txt
+
+# CloakBrowser 스텔스 Chromium 바이너리 다운로드 (최초 1회, 수백 MB)
+.venv/bin/python -c "import cloakbrowser; cloakbrowser.ensure_binary()"
+
+# 동작 점검 (root 헤드리스. '계양 그라인더' 검색)
+COUPANG_HEADLESS=true COUPANG_NO_SANDBOX=true .venv/bin/python coupang_service.py &
+sleep 15
+curl -s "http://127.0.0.1:8917/search?q=%EA%B3%84%EC%96%91%20%EA%B7%B8%EB%9D%BC%EC%9D%B8%EB%8D%94" | head -c 300
+# kill %1
+```
+
+### systemd 등록
+
+```bash
+cp /root/gmarket-lowprice/coupang-service/coupang-service.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable coupang-service
+sudo systemctl start coupang-service
+sudo systemctl status coupang-service
+sudo journalctl -u coupang-service -f
+```
+
+### 환경변수
+
+| 변수 | 기본값 | 설명 |
+|------|--------|------|
+| `COUPANG_HEADLESS` | `true` | 헤드리스 실행 (VPS 필수, headless로도 Akamai 통과 확인됨) |
+| `COUPANG_NO_SANDBOX` | (off) | **root로 실행 시 `true` 필수** (Chromium은 root에서 샌드박스 불가) |
+| `COUPANG_SERVICE_PORT` | `8917` | 서비스 포트 |
+| `COUPANG_SERVICE_URL` (워커) | `http://127.0.0.1:8917` | 워커가 사이드카를 호출하는 주소 |
+
+### 코드 업데이트
+
+```bash
+cd /root/gmarket-lowprice && git pull
+pnpm build:worker && sudo systemctl restart gmarket-worker   # 워커
+sudo systemctl restart coupang-service                       # 쿠팡 서비스 (의존성 변동 시 pip install 선행)
+```
+
+> ⚠️ CloakBrowser는 Python 래퍼(MIT) + 별도 라이선스의 Chromium 바이너리로 구성된다. 본 프로젝트는 **비상업적 사용** 기준으로 도입했다. 상업적/지속 사용 시 CloakBrowser 라이선스(github.com/CloakHQ/CloakBrowser) 확인 필요.

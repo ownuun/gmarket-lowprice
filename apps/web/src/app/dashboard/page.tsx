@@ -79,6 +79,7 @@ const getDownloadFileName = (response: Response, isV2: boolean) => {
 export default function DashboardPage() {
   const [mainTab, setMainTab] = useState<MainTab>('crawling')
   const [models, setModels] = useState('')
+  const [marketplace, setMarketplace] = useState<'gmarket' | 'coupang'>('gmarket')
   const [loading, setLoading] = useState(false)
   const [jobs, setJobs] = useState<Job[]>([])
   const [archivedJobs, setArchivedJobs] = useState<Job[]>([])
@@ -233,7 +234,7 @@ export default function DashboardPage() {
     const res = await fetch('/api/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ models: modelList }),
+      body: JSON.stringify({ models: modelList, marketplace }),
     })
 
     if (res.ok) {
@@ -560,6 +561,33 @@ export default function DashboardPage() {
                       placeholder="CM-608M2&#10;IS-415M&#10;IS-425M"
                       className="min-h-[150px] font-mono"
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>마켓 선택</Label>
+                    <div className="flex gap-1 bg-muted p-1 rounded-lg w-fit">
+                      <button
+                        type="button"
+                        onClick={() => setMarketplace('gmarket')}
+                        className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
+                          marketplace === 'gmarket'
+                            ? 'bg-background shadow-sm font-medium'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        G마켓
+                      </button>
+                      <button
+                        type="button"
+                        disabled
+                        title="쿠팡은 준비중입니다"
+                        className="px-4 py-1.5 text-sm rounded-md flex items-center gap-1.5 text-muted-foreground/50 cursor-not-allowed"
+                      >
+                        쿠팡
+                        <span className="text-[10px] leading-none px-1.5 py-0.5 rounded bg-muted-foreground/10 text-muted-foreground/70">
+                          준비중
+                        </span>
+                      </button>
+                    </div>
                   </div>
                   <Button type="submit" disabled={loading || !models.trim()}>
                     {loading ? '작업 생성 중...' : '크롤링 시작'}

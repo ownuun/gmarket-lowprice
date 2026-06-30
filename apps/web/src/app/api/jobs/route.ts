@@ -40,7 +40,8 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json()
-  const { models } = body as { models: string[] }
+  const { models, marketplace } = body as { models: string[]; marketplace?: string }
+  const marketplaceId = marketplace === 'coupang' ? 'coupang' : 'gmarket'
 
   if (!models || !Array.isArray(models) || models.length === 0) {
     return NextResponse.json(
@@ -58,6 +59,7 @@ export async function POST(request: Request) {
       total_models: models.length,
       completed_models: 0,
       failed_models: 0,
+      marketplace: marketplaceId,
     })
     .select()
     .single()

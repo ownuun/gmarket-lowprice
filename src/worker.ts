@@ -4,6 +4,7 @@ import { BrowserManager } from './browser.js'
 import { GmarketSearcher } from './searcher.js'
 import { IncidentTracker, type IncidentSettings } from './incident.js'
 import type { Product } from './types.js'
+import { CoupangSearcher } from './marketplaces/coupang.js'
 
 const SUPABASE_URL = process.env.SUPABASE_URL!
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY!
@@ -73,6 +74,7 @@ interface Job {
   total_models: number
   completed_models: number
   failed_models: number
+  marketplace?: string
 }
 
 type WorkerLogLevel = 'info' | 'success' | 'warn' | 'error'
@@ -417,6 +419,107 @@ interface JobResult {
   blocked: boolean;
 }
 
+// 쿠팡은 CloakBrowser 사이드카(HTTP)를 쓰므로 G마켓의 브라우저 재시작/컨텍스트 로테이션 경로와 분리한다.
+async function processCoupangItem(searcher: CoupangSearcher, item: JobItem): Promise<void> {
+  console.log(`[쿠팡 처리] ${item.model_name} (${item.sequence})`)
+  await addWorkerLog({
+    jobId: item.job_id,
+    jobItemId: item.id,
+    modelName: item.model_name,
+    level: 'info',
+    message: `[쿠팡 처리] ${item.model_name} (${item.sequence})`,
+  })
+
+  try {
+    await supabase.from('job_items').update({ status: 'processing' }).eq('id', item.id)
+
+    const result = await searcher.search(item.model_name)
+
+    if (result.error) {
+      await supabase
+        .from('job_items')
+        .update({ status: 'failed', error_message: result.error, processed_at: new Date().toISOString() })
+        .eq('id', item.id)
+      await supabase.rpc('increment_job_failed', { job_id: item.job_id })
+      await addWorkerLog({
+        jobId: item.job_id,
+        jobItemId: item.id,
+        modelName: item.model_name,
+        level: result.error === 'BLOCKED' ? 'warn' : 'error',
+        message: `[쿠팡 실패] ${result.error}`,
+      })
+      return
+    }
+
+    const transformedProducts = result.products.map((p) => transformProduct(p, result.searchUrl))
+    await supabase
+      .from('job_items')
+      .update({
+        status: 'completed',
+        result: { products: transformedProducts },
+        processed_at: new Date().toISOString(),
+      })
+      .eq('id', item.id)
+    await supabase.rpc('increment_job_completed', { job_id: item.job_id })
+    await addWorkerLog({
+      jobId: item.job_id,
+      jobItemId: item.id,
+      modelName: item.model_name,
+      level: 'success',
+      message: `[쿠팡 완료] 상품 ${transformedProducts.length}개`,
+    })
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e)
+    console.error(`[쿠팡 에러] ${item.model_name}: ${error}`)
+    await supabase
+      .from('job_items')
+      .update({ status: 'failed', error_message: error, processed_at: new Date().toISOString() })
+      .eq('id', item.id)
+    await supabase.rpc('increment_job_failed', { job_id: item.job_id })
+    await addWorkerLog({
+      jobId: item.job_id,
+      jobItemId: item.id,
+      modelName: item.model_name,
+      level: 'error',
+      message: `[쿠팡 에러] ${error}`,
+    })
+  }
+}
+
+async function processCoupangJob(job: Job, items: JobItem[]): Promise<void> {
+  const searcher = new CoupangSearcher()
+  console.log(`\n[쿠팡 작업] Job ${job.id} - ${items.length}개 모델`)
+  await addWorkerLog({
+    jobId: job.id,
+    level: 'info',
+    message: `[쿠팡 작업] ${items.length}개 모델 (CloakBrowser 사이드카)`,
+  })
+
+  for (const item of items) {
+    await processCoupangItem(searcher, item)
+    if (item !== items[items.length - 1]) {
+      const delayMs = randomDelay()
+      console.log(`[대기] ${(delayMs / 1000).toFixed(1)}초`)
+      await delay(delayMs)
+    }
+  }
+
+  const { data: jobStatus } = await supabase
+    .from('jobs')
+    .select('total_models, completed_models, failed_models')
+    .eq('id', job.id)
+    .single()
+
+  if (jobStatus && jobStatus.completed_models + jobStatus.failed_models >= jobStatus.total_models) {
+    await supabase
+      .from('jobs')
+      .update({ status: 'completed', completed_at: new Date().toISOString() })
+      .eq('id', job.id)
+    console.log(`[완료] Job ${job.id}`)
+    await addWorkerLog({ jobId: job.id, level: 'success', message: `[완료] Job ${job.id}` })
+  }
+}
+
 async function processJob(
   browser: BrowserManager,
   searcher: GmarketSearcher,
@@ -449,6 +552,11 @@ async function processJob(
       level: 'error',
       message: `[에러] Job items 조회 실패: ${error?.message}`,
     })
+    return { searcher, blocked: false }
+  }
+
+  if ((job.marketplace ?? 'gmarket') === 'coupang') {
+    await processCoupangJob(job, items as JobItem[])
     return { searcher, blocked: false }
   }
 
