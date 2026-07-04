@@ -2,7 +2,7 @@ import type { MarketplaceId, MarketplaceSearcher } from './types.js'
 import { CoupangSearcher } from './coupang.js'
 
 // 마켓 플러그인 메타데이터.
-// - selfContained: true  → createSearcher()로 독립 검색기 생성 (예: 쿠팡 = HTTP 사이드카 호출)
+// - selfContained: true  → createSearcher()로 독립 검색기 생성 (예: 쿠팡 = Web Unlocker API 호출)
 // - selfContained: false → 워커가 BrowserManager 수명주기를 직접 관리 (예: G마켓 인프로세스 Playwright)
 export interface MarketplaceDescriptor {
   id: MarketplaceId

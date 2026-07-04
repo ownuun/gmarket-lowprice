@@ -419,7 +419,7 @@ interface JobResult {
   blocked: boolean;
 }
 
-// 쿠팡은 CloakBrowser 사이드카(HTTP)를 쓰므로 G마켓의 브라우저 재시작/컨텍스트 로테이션 경로와 분리한다.
+// 쿠팡은 Web Unlocker(HTTP API) 기반이라 G마켓의 브라우저 재시작/컨텍스트 로테이션 경로와 분리한다.
 async function processCoupangItem(searcher: CoupangSearcher, item: JobItem): Promise<void> {
   console.log(`[쿠팡 처리] ${item.model_name} (${item.sequence})`)
   await addWorkerLog({
@@ -492,7 +492,7 @@ async function processCoupangJob(job: Job, items: JobItem[]): Promise<void> {
   await addWorkerLog({
     jobId: job.id,
     level: 'info',
-    message: `[쿠팡 작업] ${items.length}개 모델 (CloakBrowser 사이드카)`,
+    message: `[쿠팡 작업] ${items.length}개 모델 (Web Unlocker)`,
   })
 
   for (const item of items) {
