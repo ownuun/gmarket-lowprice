@@ -578,14 +578,14 @@ export default function DashboardPage() {
                       </button>
                       <button
                         type="button"
-                        disabled
-                        title="쿠팡은 준비중입니다"
-                        className="px-4 py-1.5 text-sm rounded-md flex items-center gap-1.5 text-muted-foreground/50 cursor-not-allowed"
+                        onClick={() => setMarketplace('coupang')}
+                        className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
+                          marketplace === 'coupang'
+                            ? 'bg-background shadow-sm font-medium'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
                       >
                         쿠팡
-                        <span className="text-[10px] leading-none px-1.5 py-0.5 rounded bg-muted-foreground/10 text-muted-foreground/70">
-                          준비중
-                        </span>
                       </button>
                     </div>
                   </div>
