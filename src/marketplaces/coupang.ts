@@ -22,7 +22,7 @@ const WU_API_KEY = process.env.BRD_API_KEY ?? process.env.COUPANG_WU_API_KEY ?? 
 const WU_ZONE = process.env.BRD_ZONE ?? 'web_unlocker1'
 const WU_COUNTRY = process.env.BRD_COUNTRY ?? 'kr'
 const SEARCH_TIMEOUT_MS = Number.parseInt(process.env.COUPANG_SEARCH_TIMEOUT ?? '90000', 10)
-const WU_MAX_ATTEMPTS = Number.parseInt(process.env.COUPANG_WU_ATTEMPTS ?? '4', 10)
+const WU_BUDGET_MS = Number.parseInt(process.env.COUPANG_WU_BUDGET ?? '180000', 10)
 const WU_RETRY_DELAY_MS = 1500
 
 const RESULT_LIMIT = 10
@@ -164,9 +164,10 @@ export class CoupangSearcher implements MarketplaceSearcher {
     let html = ''
     let lastError = '쿠팡 응답 없음'
     let blocked = false
-    for (let attempt = 1; attempt <= WU_MAX_ATTEMPTS; attempt++) {
+    const started = Date.now()
+    for (let attempt = 1; Date.now() - started < WU_BUDGET_MS; attempt++) {
       const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS)
+      const timer = setTimeout(() => controller.abort(), Math.min(SEARCH_TIMEOUT_MS, WU_BUDGET_MS - (Date.now() - started)))
       try {
         const res = await fetch(WU_ENDPOINT, {
           method: 'POST',
@@ -184,7 +185,7 @@ export class CoupangSearcher implements MarketplaceSearcher {
             blocked = true
             lastError = 'BLOCKED'
           } else {
-            lastError = `쿠팡 Web Unlocker 빈 응답 (${attempt}/${WU_MAX_ATTEMPTS}, ${body.length}B)`
+            lastError = `쿠팡 Web Unlocker 빈 응답 (${attempt}회, ${body.length}B)`
           }
         } else {
           lastError = `쿠팡 Web Unlocker 오류 ${res.status} ${(await res.text().catch(() => '')).slice(0, 160)}`
@@ -195,7 +196,8 @@ export class CoupangSearcher implements MarketplaceSearcher {
       } finally {
         clearTimeout(timer)
       }
-      if (attempt < WU_MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, WU_RETRY_DELAY_MS))
+      if (Date.now() - started + WU_RETRY_DELAY_MS < WU_BUDGET_MS) await new Promise((r) => setTimeout(r, WU_RETRY_DELAY_MS))
+      else break
     }
 
     if (!html) {
