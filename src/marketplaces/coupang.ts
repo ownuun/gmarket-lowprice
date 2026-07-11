@@ -14,6 +14,7 @@ interface ServiceProduct {
   url: string
   text: string
   price: number | null
+  shippingFee: number | null
 }
 
 const WU_ENDPOINT = 'https://api.brightdata.com/request'
@@ -21,6 +22,8 @@ const WU_API_KEY = process.env.BRD_API_KEY ?? process.env.COUPANG_WU_API_KEY ?? 
 const WU_ZONE = process.env.BRD_ZONE ?? 'web_unlocker1'
 const WU_COUNTRY = process.env.BRD_COUNTRY ?? 'kr'
 const SEARCH_TIMEOUT_MS = Number.parseInt(process.env.COUPANG_SEARCH_TIMEOUT ?? '90000', 10)
+const WU_MAX_ATTEMPTS = Number.parseInt(process.env.COUPANG_WU_ATTEMPTS ?? '4', 10)
+const WU_RETRY_DELAY_MS = 1500
 
 const RESULT_LIMIT = 10
 
@@ -81,9 +84,25 @@ function parseAnchorPrice(text: string): number | null {
   return first ? parsePrice(first[1]) : null
 }
 
+// JSON-LD(offers)에는 배송비가 없어, 검색결과 카드(<li class="ProductUnit_productUnit...">)에서 productId별 배송비를 뽑는다.
+// "무료배송" → 0, "배송비 X원" → X. 카드 경계는 CSS 클래스 변경에 견디도록 안정적인 클래스 접두사로 분리한다.
+function parseShippingMap(html: string): Map<string, number | null> {
+  const map = new Map<string, number | null>()
+  for (const seg of html.split('ProductUnit_productUnit').slice(1)) {
+    const card = seg.slice(0, 3000)
+    const idMatch = card.match(/\/vp\/products\/(\d+)/)
+    if (!idMatch || map.has(idMatch[1])) continue
+    const feeMatch = card.match(/배송비\s*([0-9][0-9,]*)\s*원/)
+    const fee = feeMatch ? parsePrice(feeMatch[1]) : card.includes('무료배송') ? 0 : null
+    map.set(idMatch[1], fee)
+  }
+  return map
+}
+
 // 쿠팡 검색 HTML에서 상품 목록을 추출한다. productId로 중복 제거.
 function parseProducts(html: string): ServiceProduct[] {
   const byId = new Map<string, ServiceProduct>()
+  const ship = parseShippingMap(html)
 
   // 1) schema.org JSON-LD (ItemList) 우선.
   for (const block of html.matchAll(/<script type="application\/ld\+json">(.*?)<\/script>/gs)) {
@@ -107,7 +126,7 @@ function parseProducts(html: string): ServiceProduct[] {
       const offer = Array.isArray(it.offers) ? it.offers[0] : (it.offers as Record<string, unknown> | undefined)
       const price = parsePrice(offer?.price ?? offer?.lowPrice)
       const text = String(it.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 180)
-      byId.set(id, { productId: id, url: toProductUrl(url), text, price })
+      byId.set(id, { productId: id, url: toProductUrl(url), text, price, shippingFee: ship.get(id) ?? null })
     }
   }
   if (byId.size > 0) return [...byId.values()]
@@ -122,7 +141,7 @@ function parseProducts(html: string): ServiceProduct[] {
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, 180)
-    byId.set(id, { productId: id, url: toProductUrl(a[1]), text, price: parseAnchorPrice(text) })
+    byId.set(id, { productId: id, url: toProductUrl(a[1]), text, price: parseAnchorPrice(text), shippingFee: ship.get(id) ?? null })
   }
   return [...byId.values()]
 }
@@ -141,31 +160,46 @@ export class CoupangSearcher implements MarketplaceSearcher {
     // 실제 크롤은 가격순(salePriceAsc)으로 요청한다. 표시용 searchUrl은 정렬 없는 사용자 링크.
     const fetchUrl = `https://www.coupang.com/np/search?q=${encodeURIComponent(modelName)}&sorter=salePriceAsc&channel=user`
 
-    let html: string
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS)
-    try {
-      const res = await fetch(WU_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${WU_API_KEY}` },
-        body: JSON.stringify({ zone: WU_ZONE, url: fetchUrl, format: 'raw', country: WU_COUNTRY }),
-        signal: controller.signal,
-      })
-      if (!res.ok) {
-        const detail = (await res.text().catch(() => '')).slice(0, 200)
-        return { modelName, products: [], error: `쿠팡 Web Unlocker 오류 ${res.status} ${detail}`, searchUrl }
+    // Web Unlocker가 간헐적으로 200에 빈 본문을 돌려주므로(관측됨) 빈 응답/일시 오류(429·5xx)는 재시도한다.
+    let html = ''
+    let lastError = '쿠팡 응답 없음'
+    let blocked = false
+    for (let attempt = 1; attempt <= WU_MAX_ATTEMPTS; attempt++) {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS)
+      try {
+        const res = await fetch(WU_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${WU_API_KEY}` },
+          body: JSON.stringify({ zone: WU_ZONE, url: fetchUrl, format: 'raw', country: WU_COUNTRY }),
+          signal: controller.signal,
+        })
+        if (res.ok) {
+          const body = await res.text()
+          if (body.includes('/vp/products/') || body.length > 50000) {
+            html = body
+            break
+          }
+          if (/Access Denied|AkamaiGHost|errors\.edgesuite/.test(body)) {
+            blocked = true
+            lastError = 'BLOCKED'
+          } else {
+            lastError = `쿠팡 Web Unlocker 빈 응답 (${attempt}/${WU_MAX_ATTEMPTS}, ${body.length}B)`
+          }
+        } else {
+          lastError = `쿠팡 Web Unlocker 오류 ${res.status} ${(await res.text().catch(() => '')).slice(0, 160)}`
+          if (res.status < 500 && res.status !== 429) break
+        }
+      } catch (e) {
+        lastError = `쿠팡 Web Unlocker 연결 실패: ${e instanceof Error ? e.message : String(e)}`
+      } finally {
+        clearTimeout(timer)
       }
-      html = await res.text()
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      return { modelName, products: [], error: `쿠팡 Web Unlocker 연결 실패: ${msg}`, searchUrl }
-    } finally {
-      clearTimeout(timer)
+      if (attempt < WU_MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, WU_RETRY_DELAY_MS))
     }
 
-    // Web Unlocker가 우회 실패 시 Akamai 차단 페이지가 그대로 넘어온다.
-    if (!html.includes('/vp/products/') && /Access Denied|AkamaiGHost|errors\.edgesuite/.test(html)) {
-      return { modelName, products: [], error: 'BLOCKED', searchUrl }
+    if (!html) {
+      return { modelName, products: [], error: blocked ? 'BLOCKED' : lastError, searchUrl }
     }
 
     const candidates = parseProducts(html)
@@ -183,7 +217,7 @@ export class CoupangSearcher implements MarketplaceSearcher {
       sellerName: '쿠팡',
       couponPrice: p.price,
       regularPrice: p.price,
-      shippingFee: null,
+      shippingFee: p.shippingFee,
       discountPercent: null,
       productNo: p.productId,
       productUrl: p.url,
